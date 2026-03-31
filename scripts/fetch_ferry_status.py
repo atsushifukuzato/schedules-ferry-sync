@@ -115,7 +115,14 @@ def detect_yaeyama_status():
     return status
 
 
-def send_to_bubble(operator_name, status, service_date, source_url, route_import_key="", departure_hhmm=""):
+def send_to_bubble(
+    operator_name,
+    status,
+    service_date,
+    source_url,
+    route_import_key="",
+    departure_hhmm=""
+):
     payload = {
         "operator": operator_name,
         "status": status,
@@ -147,29 +154,40 @@ def main():
 
     service_date = today_iso_date()
 
+    # 安栄観光
     anei_status = detect_anei_status()
-    send_to_bubble(
-        operator_name="Anei Kanko",
-        status=anei_status,
-        service_date=service_date,
-        source_url=ANEI_URL
-    )
+
+    if anei_status != "normal":
+        send_to_bubble(
+            operator_name="Anei Kanko",
+            status=anei_status,
+            service_date=service_date,
+            source_url=ANEI_URL
+        )
+    else:
+        print("ANEI is normal -> skip save")
 
     time.sleep(1)
 
+    # 八重山観光フェリー
     yaeyama_status = detect_yaeyama_status()
-    send_to_bubble(
-        operator_name="Yaeyama Kanko Ferry",
-        status=yaeyama_status,
-        service_date=service_date,
-        source_url=YAEYAMA_URL,
-        route_import_key="yaeyama-kanko-ferry__鳩間→西表上原",
-        departure_hhmm="16:40"
-    )
+
+    if yaeyama_status != "normal":
+        send_to_bubble(
+            operator_name="Yaeyama Kanko Ferry",
+            status=yaeyama_status,
+            service_date=service_date,
+            source_url=YAEYAMA_URL,
+            route_import_key="yaeyama-kanko-ferry__鳩間→西表上原",
+            departure_hhmm="16:40"
+        )
+    else:
+        print("YAEYAMA is normal -> skip save")
 
     print("=================================")
     print("Sync finished")
     print("=================================")
+
 
 if __name__ == "__main__":
     main()
