@@ -10,8 +10,11 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 ANEI_URL = "https://aneikankou.co.jp/condition"
 YAEYAMA_URL = "https://yaeyama.co.jp/operation.html#status"
 
-# 本番環境
 BUBBLE_URL = "https://schedules.jp/api/1.1/wf/receive_ferry_status"
+
+
+def today_iso_date():
+    return datetime.now().date().isoformat()
 
 
 def detect_anei_status():
@@ -88,7 +91,6 @@ def detect_yaeyama_status():
         if not line:
             continue
 
-        # 運航状況行だけ見る
         if line.startswith("〇") or line.startswith("○"):
             circle_count += 1
             print(line)
@@ -113,11 +115,13 @@ def detect_yaeyama_status():
     return status
 
 
-def send_to_bubble(operator_name, status):
+def send_to_bubble(operator_name, status, service_date, source_url):
     payload = {
         "operator": operator_name,
         "status": status,
-        "checked_at": datetime.now().isoformat()
+        "checked_at": datetime.now().isoformat(),
+        "service_date": service_date,
+        "source_url": source_url
     }
 
     print("=================================")
@@ -139,13 +143,25 @@ def main():
     print("SCHEDULES Ferry Sync Started")
     print("=================================")
 
+    service_date = today_iso_date()
+
     anei_status = detect_anei_status()
-    send_to_bubble("Anei Kanko", anei_status)
+    send_to_bubble(
+        operator_name="Anei Kanko",
+        status=anei_status,
+        service_date=service_date,
+        source_url=ANEI_URL
+    )
 
     time.sleep(1)
 
     yaeyama_status = detect_yaeyama_status()
-    send_to_bubble("Yaeyama Kanko Ferry", yaeyama_status)
+    send_to_bubble(
+        operator_name="Yaeyama Kanko Ferry",
+        status=yaeyama_status,
+        service_date=service_date,
+        source_url=YAEYAMA_URL
+    )
 
     print("=================================")
     print("Sync finished")
