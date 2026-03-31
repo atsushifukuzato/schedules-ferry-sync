@@ -115,14 +115,15 @@ def detect_yaeyama_status():
     return status
 
 
-def send_to_bubble(operator_name, status, service_date, source_url, route_import_key=""):
+def send_to_bubble(operator_name, status, service_date, source_url, route_import_key="", departure_hhmm=""):
     payload = {
         "operator": operator_name,
         "status": status,
         "checked_at": datetime.now().isoformat(),
         "service_date": service_date,
         "source_url": source_url,
-        "route_import_key": route_import_key
+        "route_import_key": route_import_key,
+        "departure_hhmm": departure_hhmm
     }
 
     print("=================================")
@@ -162,7 +163,8 @@ def main():
         status=yaeyama_status,
         service_date=service_date,
         source_url=YAEYAMA_URL,
-        route_import_key="yaeyama-kanko-ferry__鳩間→西表上原"
+        route_import_key="yaeyama-kanko-ferry__鳩間→西表上原",
+        departure_hhmm="09:00"
     )
 
     print("=================================")
