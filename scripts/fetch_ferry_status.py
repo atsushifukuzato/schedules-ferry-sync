@@ -16,9 +16,13 @@ print("Fetching ANEI...")
 anei = requests.get(ANEI_URL, timeout=30)
 print("ANEI status:", anei.status_code)
 
+print("ANEI length:", len(anei.text))
+
 print("Fetching YAEYAMA...")
 yaeyama = requests.get(YAEYAMA_URL, timeout=30, verify=False)
 print("YAEYAMA status:", yaeyama.status_code)
+
+print("YAEYAMA length:", len(yaeyama.text))
 
 print("=================================")
 print("Sync finished")
