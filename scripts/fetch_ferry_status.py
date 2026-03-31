@@ -84,21 +84,42 @@ def normalize_mark(mark):
         return "circle"
     if mark in ("×", "✕", "✖"):
         return "cross"
+    if mark in ("△", "▲"):
+        return "pending"
     return ""
 
 
-def extract_mark_and_time(line):
-    m = re.match(r"^\s*([〇○×✕✖])\s*([0-2]?\d:\d{2})\s*$", line)
-    if not m:
-        return None, None
+def extract_status_and_time(line):
+    """
+    例:
+      '〇 08:30'
+      '× 09:00'
+      '△ 11:00'
+      '△ 11:00 運航判断'
+      '11:00 運航未定'
+    などを拾う
+    """
+    line = line.strip()
 
-    raw_mark = m.group(1)
-    departure_hhmm = m.group(2)
+    # 記号つき
+    m = re.match(r"^\s*([〇○×✕✖△▲])\s*([0-2]?\d:\d{2})(?:\s+.*)?$", line)
+    if m:
+        status = normalize_mark(m.group(1))
+        departure_hhmm = m.group(2)
+        if len(departure_hhmm) == 4:
+            departure_hhmm = f"0{departure_hhmm}"
+        return status, departure_hhmm
 
-    if len(departure_hhmm) == 4:
-        departure_hhmm = f"0{departure_hhmm}"
+    # 記号なし + 未定/判断/調整中
+    if ("未定" in line) or ("判断" in line) or ("調整中" in line):
+        m2 = re.search(r"([0-2]?\d:\d{2})", line)
+        if m2:
+            departure_hhmm = m2.group(1)
+            if len(departure_hhmm) == 4:
+                departure_hhmm = f"0{departure_hhmm}"
+            return "pending", departure_hhmm
 
-    return normalize_mark(raw_mark), departure_hhmm
+    return None, None
 
 
 def detect_yaeyama_status():
@@ -156,12 +177,14 @@ def detect_yaeyama_status():
         print(name, "->", route_key_map.get(name, "NOT FOUND"))
 
     print("=================================")
-    print("YAEYAMA CANCELLED SAILINGS")
+    print("YAEYAMA ABNORMAL SAILINGS")
     print("=================================")
 
     cancelled_sailings = []
+    pending_sailings = []
     circle_count = 0
     cross_count = 0
+    pending_count = 0
 
     for i, line in enumerate(lines):
         if line not in route_names:
@@ -174,13 +197,14 @@ def detect_yaeyama_status():
             if next_line in route_names:
                 break
 
-            mark, departure_hhmm = extract_mark_and_time(next_line)
-            if not mark or not departure_hhmm:
+            status_kind, departure_hhmm = extract_status_and_time(next_line)
+            if not status_kind or not departure_hhmm:
                 continue
 
-            if mark == "circle":
+            if status_kind == "circle":
                 circle_count += 1
-            elif mark == "cross":
+
+            elif status_kind == "cross":
                 cross_count += 1
                 cancelled_sailings.append({
                     "route_name": route_name,
@@ -188,6 +212,23 @@ def detect_yaeyama_status():
                     "departure_hhmm": departure_hhmm,
                 })
                 print(
+                    "CANCELLED:",
+                    route_name,
+                    "->",
+                    departure_hhmm,
+                    "->",
+                    route_import_key
+                )
+
+            elif status_kind == "pending":
+                pending_count += 1
+                pending_sailings.append({
+                    "route_name": route_name,
+                    "route_import_key": route_import_key,
+                    "departure_hhmm": departure_hhmm,
+                })
+                print(
+                    "PENDING:",
                     route_name,
                     "->",
                     departure_hhmm,
@@ -197,19 +238,22 @@ def detect_yaeyama_status():
 
     print("YAEYAMA CIRCLE COUNT:", circle_count)
     print("YAEYAMA CROSS COUNT:", cross_count)
+    print("YAEYAMA PENDING COUNT:", pending_count)
 
-    if cross_count == 0 and circle_count > 0:
+    if cross_count == 0 and pending_count == 0 and circle_count > 0:
         status = "normal"
-    elif cross_count > 0 and circle_count > 0:
-        status = "partial"
-    elif cross_count > 0 and circle_count == 0:
+    elif cross_count > 0 and pending_count == 0 and circle_count == 0:
         status = "cancelled"
+    elif pending_count > 0 and cross_count == 0 and circle_count == 0:
+        status = "pending"
+    elif cross_count > 0 or pending_count > 0:
+        status = "partial"
     else:
         status = "unknown"
 
     print("YAEYAMA STATUS:", status)
 
-    return status, cancelled_sailings
+    return status, cancelled_sailings, pending_sailings
 
 
 def send_to_bubble(
@@ -273,37 +317,51 @@ def main():
 
     # 八重山観光フェリー
     try:
-        yaeyama_status, cancelled_sailings = detect_yaeyama_status()
+        yaeyama_status, cancelled_sailings, pending_sailings = detect_yaeyama_status()
 
         print("YAEYAMA CANCELLED SAILINGS:", cancelled_sailings)
+        print("YAEYAMA PENDING SAILINGS:", pending_sailings)
 
         if yaeyama_status == "normal":
             print("YAEYAMA is normal -> skip save")
 
-        elif cancelled_sailings:
-            print("YAEYAMA will send cancelled sailings count:", len(cancelled_sailings))
+        else:
+            if cancelled_sailings:
+                print("YAEYAMA will send cancelled sailings count:", len(cancelled_sailings))
+                for sailing_data in cancelled_sailings:
+                    print("YAEYAMA CANCELLED SEND TARGET:", sailing_data)
+                    send_to_bubble(
+                        operator_name="Yaeyama Kanko Ferry",
+                        status="cancelled",
+                        service_date=service_date,
+                        source_url=YAEYAMA_URL,
+                        route_import_key=sailing_data.get("route_import_key", ""),
+                        departure_hhmm=sailing_data.get("departure_hhmm", "")
+                    )
+                    time.sleep(0.3)
 
-            for sailing_data in cancelled_sailings:
-                print("YAEYAMA SEND TARGET:", sailing_data)
+            if pending_sailings:
+                print("YAEYAMA will send pending sailings count:", len(pending_sailings))
+                for sailing_data in pending_sailings:
+                    print("YAEYAMA PENDING SEND TARGET:", sailing_data)
+                    send_to_bubble(
+                        operator_name="Yaeyama Kanko Ferry",
+                        status="pending",
+                        service_date=service_date,
+                        source_url=YAEYAMA_URL,
+                        route_import_key=sailing_data.get("route_import_key", ""),
+                        departure_hhmm=sailing_data.get("departure_hhmm", "")
+                    )
+                    time.sleep(0.3)
 
+            if not cancelled_sailings and not pending_sailings:
+                print("YAEYAMA abnormal but no abnormal sailings parsed -> fallback send")
                 send_to_bubble(
                     operator_name="Yaeyama Kanko Ferry",
-                    status="cancelled",
+                    status=yaeyama_status,
                     service_date=service_date,
-                    source_url=YAEYAMA_URL,
-                    route_import_key=sailing_data.get("route_import_key", ""),
-                    departure_hhmm=sailing_data.get("departure_hhmm", "")
+                    source_url=YAEYAMA_URL
                 )
-                time.sleep(0.3)
-
-        else:
-            print("YAEYAMA abnormal but no cancelled sailings parsed -> fallback send")
-            send_to_bubble(
-                operator_name="Yaeyama Kanko Ferry",
-                status=yaeyama_status,
-                service_date=service_date,
-                source_url=YAEYAMA_URL
-            )
 
     except Exception as e:
         print("YAEYAMA fetch/parse failed -> skip")
