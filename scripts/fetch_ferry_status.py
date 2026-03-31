@@ -158,14 +158,14 @@ def main():
     time.sleep(1)
 
     yaeyama_status = detect_yaeyama_status()
-    send_to_bubble(
-        operator_name="Yaeyama Kanko Ferry",
-        status=yaeyama_status,
-        service_date=service_date,
-        source_url=YAEYAMA_URL,
-        route_import_key="yaeyama-kanko-ferry__鳩間→西表上原",
-        departure_hhmm="09:00"
-    )
+send_to_bubble(
+    operator_name="Yaeyama Kanko Ferry",
+    status=yaeyama_status,
+    service_date=service_date,
+    source_url=YAEYAMA_URL,
+    route_import_key="yaeyama-kanko-ferry__鳩間→西表上原",
+    departure_hhmm="16:40"
+)
 
     print("=================================")
     print("Sync finished")
