@@ -83,11 +83,23 @@ def detect_yaeyama_status():
     lines = [line.strip() for line in text.split("\n") if line.strip()]
 
     route_names = []
-    route_keywords = ["航路", "route"]
+
+    exclude_names = {
+        "離島定期航路",
+        "航路図",
+        "離島航路図",
+        "上原航路欠航時バス",
+        "航路",
+    }
 
     for line in lines:
-        if "航路" in line and len(line) <= 20:
-            route_names.append(line)
+        if "航路" not in line:
+            continue
+        if len(line) > 20:
+            continue
+        if line in exclude_names:
+            continue
+        route_names.append(line)
 
     print("=================================")
     print("YAEYAMA ROUTE NAMES")
