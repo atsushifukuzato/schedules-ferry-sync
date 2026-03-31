@@ -273,19 +273,17 @@ def main():
     print("YAEYAMA STATUS:", yaeyama_status)
     print("YAEYAMA ROUTE DATA:", yaeyama_routes)
 
-    if yaeyama_status != "normal":
-        hatoma_data = yaeyama_routes.get("上原-鳩間航路", {})
+    # 一時テスト: normal でも1件だけ送る
+    hatoma_data = yaeyama_routes.get("上原-鳩間航路", {})
 
-        send_to_bubble(
-            operator_name="Yaeyama Kanko Ferry",
-            status=yaeyama_status,
-            service_date=service_date,
-            source_url=YAEYAMA_URL,
-            route_import_key=hatoma_data.get("route_import_key", ""),
-            departure_hhmm=hatoma_data.get("departure_hhmm", "")
-        )
-    else:
-        print("YAEYAMA is normal -> skip save")
+    send_to_bubble(
+        operator_name="Yaeyama Kanko Ferry",
+        status=yaeyama_status,
+        service_date=service_date,
+        source_url=YAEYAMA_URL,
+        route_import_key=hatoma_data.get("route_import_key", ""),
+        departure_hhmm=hatoma_data.get("departure_hhmm", "")
+    )
 
     print("=================================")
     print("Sync finished")
