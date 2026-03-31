@@ -54,17 +54,18 @@ def detect_anei_status():
 def get_yaeyama_response():
     last_error = None
 
-    for attempt in range(1, 4):
+    for attempt in range(1, 3):
         try:
-            print(f"YAEYAMA fetch attempt {attempt}/3")
-            res = requests.get(YAEYAMA_URL, timeout=30, verify=False)
+            print(f"YAEYAMA fetch attempt {attempt}/2")
+            res = requests.get(YAEYAMA_URL, timeout=10, verify=False)
             print("YAEYAMA HTTP STATUS:", res.status_code)
             res.encoding = res.apparent_encoding
             return res
+
         except requests.RequestException as e:
             last_error = e
             print(f"YAEYAMA fetch failed on attempt {attempt}: {e}")
-            time.sleep(3)
+            time.sleep(2)
 
     raise last_error
 
