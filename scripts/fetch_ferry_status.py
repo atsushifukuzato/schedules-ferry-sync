@@ -79,24 +79,30 @@ def detect_yaeyama_status():
     soup = BeautifulSoup(res.text, "lxml")
     text = soup.get_text("\n", strip=True)
 
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+
+    route_names = []
+    route_keywords = ["航路", "route"]
+
+    for line in lines:
+        if "航路" in line and len(line) <= 20:
+            route_names.append(line)
+
+    print("=================================")
+    print("YAEYAMA ROUTE NAMES")
+    print("=================================")
+
+    for name in route_names:
+        print(name)
+
     circle_count = 0
     cross_count = 0
 
-    print("=================================")
-    print("YAEYAMA STATUS LINES")
-    print("=================================")
-
-    for line in text.split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-
+    for line in lines:
         if line.startswith("〇") or line.startswith("○"):
             circle_count += 1
-            print(line)
         elif line.startswith("×") or line.startswith("✕"):
             cross_count += 1
-            print(line)
 
     print("YAEYAMA CIRCLE COUNT:", circle_count)
     print("YAEYAMA CROSS COUNT:", cross_count)
