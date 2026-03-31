@@ -133,7 +133,6 @@ def detect_yaeyama_status():
         if line not in route_names:
             continue
 
-        # この航路名の次の行以降から、最初に出てくる 〇 HH:MM / ○ HH:MM / × HH:MM を拾う
         first_time = None
 
         for next_line in lines[i + 1:i + 40]:
@@ -151,8 +150,18 @@ def detect_yaeyama_status():
                     first_time = parts[1].strip()
                     break
 
-        route_first_times[line] = first_time
-        print(line, "->", first_time, "->", route_key_map.get(line, "NOT FOUND"))
+        route_first_times[line] = {
+            "route_import_key": route_key_map.get(line, ""),
+            "departure_hhmm": first_time,
+        }
+
+        print(
+            line,
+            "->",
+            first_time,
+            "->",
+            route_key_map.get(line, "NOT FOUND")
+        )
 
     circle_count = text.count("〇")
     cross_count = text.count("×")
@@ -160,10 +169,16 @@ def detect_yaeyama_status():
     print("YAEYAMA CIRCLE COUNT:", circle_count)
     print("YAEYAMA CROSS COUNT:", cross_count)
 
-    if cross_count > 0:
-        return "cancelled"
+    if cross_count == 0 and circle_count > 0:
+        status = "normal"
+    elif cross_count > 0 and circle_count > 0:
+        status = "partial"
+    elif cross_count > 0 and circle_count == 0:
+        status = "cancelled"
+    else:
+        status = "unknown"
 
-    return "normal"
+    return status, route_first_times
 
     print("=================================")
     print("YAEYAMA ROUTE NAMES")
@@ -253,16 +268,21 @@ def main():
     time.sleep(1)
 
     # 八重山観光フェリー
-    yaeyama_status = detect_yaeyama_status()
+    yaeyama_status, yaeyama_routes = detect_yaeyama_status()
+
+    print("YAEYAMA STATUS:", yaeyama_status)
+    print("YAEYAMA ROUTE DATA:", yaeyama_routes)
 
     if yaeyama_status != "normal":
+        hatoma_data = yaeyama_routes.get("上原-鳩間航路", {})
+
         send_to_bubble(
             operator_name="Yaeyama Kanko Ferry",
             status=yaeyama_status,
             service_date=service_date,
             source_url=YAEYAMA_URL,
-            route_import_key="yaeyama-kanko-ferry__鳩間→西表上原",
-            departure_hhmm="16:40"
+            route_import_key=hatoma_data.get("route_import_key", ""),
+            departure_hhmm=hatoma_data.get("departure_hhmm", "")
         )
     else:
         print("YAEYAMA is normal -> skip save")
