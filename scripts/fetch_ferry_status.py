@@ -59,6 +59,9 @@ def detect_yaeyama_status():
     res = requests.get(YAEYAMA_URL, timeout=30, verify=False)
     print("YAEYAMA HTTP STATUS:", res.status_code)
 
+    # 文字コード補正
+    res.encoding = res.apparent_encoding
+
     soup = BeautifulSoup(res.text, "lxml")
     text = soup.get_text("\n", strip=True)
 
