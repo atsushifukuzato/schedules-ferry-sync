@@ -1,12 +1,14 @@
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 import requests
 import urllib3
 from bs4 import BeautifulSoup
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+JST = timezone(timedelta(hours=9))
 
 ANEI_URL = "https://aneikankou.co.jp/condition"
 YAEYAMA_URL = "https://yaeyama.co.jp/operation.html#status"
@@ -15,7 +17,11 @@ BUBBLE_URL = "https://schedules.jp/api/1.1/wf/receive_ferry_status"
 
 
 def today_iso_date():
-    return datetime.now().date().isoformat()
+    return datetime.now(JST).date().isoformat()
+
+
+def now_iso_jst():
+    return datetime.now(JST).isoformat()
 
 
 def detect_anei_status():
@@ -89,6 +95,9 @@ def extract_mark_and_time(line):
     raw_mark = m.group(1)
     departure_hhmm = m.group(2)
 
+    if len(departure_hhmm) == 4:
+        departure_hhmm = f"0{departure_hhmm}"
+
     return normalize_mark(raw_mark), departure_hhmm
 
 
@@ -111,6 +120,7 @@ def detect_yaeyama_status():
         "離島航路図",
         "上原航路欠航時バス",
         "航路",
+        "その他航路は通常運航を予定しています。",
     }
 
     for line in lines:
@@ -198,7 +208,6 @@ def detect_yaeyama_status():
         status = "unknown"
 
     print("YAEYAMA STATUS:", status)
-    print("YAEYAMA CANCELLED SAILINGS:", cancelled_sailings)
 
     return status, cancelled_sailings
 
@@ -214,7 +223,7 @@ def send_to_bubble(
     payload = {
         "operator": operator_name,
         "status": status,
-        "checked_at": datetime.now().isoformat(),
+        "checked_at": now_iso_jst(),
         "service_date": service_date,
         "source_url": source_url,
         "route_import_key": route_import_key,
@@ -266,7 +275,6 @@ def main():
     try:
         yaeyama_status, cancelled_sailings = detect_yaeyama_status()
 
-        print("YAEYAMA STATUS:", yaeyama_status)
         print("YAEYAMA CANCELLED SAILINGS:", cancelled_sailings)
 
         if yaeyama_status == "normal":
