@@ -1,11 +1,21 @@
+import requests
+
+ANEI_URL = "https://aneikankou.co.jp/condition"
+YAEYAMA_URL = "https://yaeyama.co.jp/operation.html#status"
+
 print("=================================")
 print("SCHEDULES Ferry Sync Started")
 print("=================================")
 
 print("Fetching ferry status...")
 
-print("anei: OK")
-print("yaeyama: OK")
+print("Fetching ANEI...")
+anei = requests.get(ANEI_URL, timeout=30)
+print("ANEI status:", anei.status_code)
+
+print("Fetching YAEYAMA...")
+yaeyama = requests.get(YAEYAMA_URL, timeout=30)
+print("YAEYAMA status:", yaeyama.status_code)
 
 print("=================================")
 print("Sync finished")
