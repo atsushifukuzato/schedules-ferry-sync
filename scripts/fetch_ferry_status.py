@@ -59,16 +59,21 @@ def detect_yaeyama_status():
     res = requests.get(YAEYAMA_URL, timeout=30, verify=False)
     print("YAEYAMA HTTP STATUS:", res.status_code)
 
-    # 文字コード補正
     res.encoding = res.apparent_encoding
 
     soup = BeautifulSoup(res.text, "lxml")
     text = soup.get_text("\n", strip=True)
 
     print("=================================")
-    print("YAEYAMA TEXT SAMPLE")
+    print("YAEYAMA STATUS LINES")
     print("=================================")
-    print(text[:2000])
+
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if "〇" in line or "○" in line or "×" in line or "欠航" in line:
+            print(line)
 
     status = "unknown"
     return status
