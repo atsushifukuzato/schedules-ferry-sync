@@ -4,11 +4,9 @@ on:
   workflow_dispatch:
 
   schedule:
-    - cron: '35 20 * * *'
-    - cron: '5 22 * * *'
-    - cron: '5 1 * * *'
-    - cron: '5 4 * * *'
-    - cron: '5 7 * * *'
+    - cron: '0 21 * * *'   # 06:00 JST
+    - cron: '5 22 * * *'   # 07:05 JST
+    - cron: '5 4 * * *'    # 13:05 JST
 
 jobs:
   sync:
