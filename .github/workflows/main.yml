@@ -22,5 +22,8 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
       - name: Run script
         run: python scripts/fetch_ferry_status.py
