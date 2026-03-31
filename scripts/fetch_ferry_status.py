@@ -13,9 +13,6 @@ YAEYAMA_URL = "https://yaeyama.co.jp/operation.html#status"
 # 本番環境
 BUBBLE_URL = "https://schedules.jp/api/1.1/wf/receive_ferry_status"
 
-# テスト環境を使う場合はこっち
-# BUBBLE_URL = "https://schedules.jp/version-test/api/1.1/wf/receive_ferry_status"
-
 
 def detect_anei_status():
     print("=================================")
@@ -59,11 +56,8 @@ def get_yaeyama_response():
             print(f"YAEYAMA fetch attempt {attempt}/3")
             res = requests.get(YAEYAMA_URL, timeout=30, verify=False)
             print("YAEYAMA HTTP STATUS:", res.status_code)
-
-            # 文字コード補正
             res.encoding = res.apparent_encoding
             return res
-
         except requests.RequestException as e:
             last_error = e
             print(f"YAEYAMA fetch failed on attempt {attempt}: {e}")
@@ -82,6 +76,9 @@ def detect_yaeyama_status():
     soup = BeautifulSoup(res.text, "lxml")
     text = soup.get_text("\n", strip=True)
 
+    circle_count = 0
+    cross_count = 0
+
     print("=================================")
     print("YAEYAMA STATUS LINES")
     print("=================================")
@@ -90,11 +87,28 @@ def detect_yaeyama_status():
         line = line.strip()
         if not line:
             continue
-        if "〇" in line or "○" in line or "×" in line or "欠航" in line:
+
+        # 運航状況行だけ見る
+        if line.startswith("〇") or line.startswith("○"):
+            circle_count += 1
+            print(line)
+        elif line.startswith("×") or line.startswith("✕"):
+            cross_count += 1
             print(line)
 
-    # まだ判定は仮
-    status = "unknown"
+    print("YAEYAMA CIRCLE COUNT:", circle_count)
+    print("YAEYAMA CROSS COUNT:", cross_count)
+
+    if cross_count == 0 and circle_count > 0:
+        status = "normal"
+    elif cross_count > 0 and circle_count > 0:
+        status = "partial"
+    elif cross_count > 0 and circle_count == 0:
+        status = "cancelled"
+    else:
+        status = "unknown"
+
+    print("YAEYAMA STATUS:", status)
 
     return status
 
@@ -125,14 +139,11 @@ def main():
     print("SCHEDULES Ferry Sync Started")
     print("=================================")
 
-    # 1件目: 安栄観光
     anei_status = detect_anei_status()
     send_to_bubble("Anei Kanko", anei_status)
 
-    # 同一タイミングの連続POSTを少し避ける
     time.sleep(1)
 
-    # 2件目: 八重山観光フェリー
     yaeyama_status = detect_yaeyama_status()
     send_to_bubble("Yaeyama Kanko Ferry", yaeyama_status)
 
