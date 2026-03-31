@@ -268,12 +268,13 @@ def main():
     time.sleep(1)
 
     # 八重山観光フェリー
-    yaeyama_status, yaeyama_routes = detect_yaeyama_status()
+yaeyama_status, yaeyama_routes = detect_yaeyama_status()
 
-    print("YAEYAMA STATUS:", yaeyama_status)
-    print("YAEYAMA ROUTE DATA:", yaeyama_routes)
+print("YAEYAMA STATUS:", yaeyama_status)
+print("YAEYAMA ROUTE DATA:", yaeyama_routes)
 
-    # 一時テスト: normal でも1件だけ送る
+if yaeyama_status != "normal":
+
     hatoma_data = yaeyama_routes.get("上原-鳩間航路", {})
 
     send_to_bubble(
@@ -284,6 +285,9 @@ def main():
         route_import_key=hatoma_data.get("route_import_key", ""),
         departure_hhmm=hatoma_data.get("departure_hhmm", "")
     )
+
+else:
+    print("YAEYAMA is normal -> skip save")
 
     print("=================================")
     print("Sync finished")
