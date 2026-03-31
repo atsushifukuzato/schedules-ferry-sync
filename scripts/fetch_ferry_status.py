@@ -51,15 +51,33 @@ def detect_anei_status():
     return status
 
 
+def get_yaeyama_response():
+    last_error = None
+
+    for attempt in range(1, 4):
+        try:
+            print(f"YAEYAMA fetch attempt {attempt}/3")
+            res = requests.get(YAEYAMA_URL, timeout=30, verify=False)
+            print("YAEYAMA HTTP STATUS:", res.status_code)
+
+            # 文字コード補正
+            res.encoding = res.apparent_encoding
+            return res
+
+        except requests.RequestException as e:
+            last_error = e
+            print(f"YAEYAMA fetch failed on attempt {attempt}: {e}")
+            time.sleep(3)
+
+    raise last_error
+
+
 def detect_yaeyama_status():
     print("=================================")
     print("FETCHING YAEYAMA")
     print("=================================")
 
-    res = requests.get(YAEYAMA_URL, timeout=30, verify=False)
-    print("YAEYAMA HTTP STATUS:", res.status_code)
-
-    res.encoding = res.apparent_encoding
+    res = get_yaeyama_response()
 
     soup = BeautifulSoup(res.text, "lxml")
     text = soup.get_text("\n", strip=True)
@@ -75,7 +93,9 @@ def detect_yaeyama_status():
         if "〇" in line or "○" in line or "×" in line or "欠航" in line:
             print(line)
 
+    # まだ判定は仮
     status = "unknown"
+
     return status
 
 
@@ -109,7 +129,7 @@ def main():
     anei_status = detect_anei_status()
     send_to_bubble("Anei Kanko", anei_status)
 
-    # 同一タイミングでの連続POSTを少し避ける
+    # 同一タイミングの連続POSTを少し避ける
     time.sleep(1)
 
     # 2件目: 八重山観光フェリー
