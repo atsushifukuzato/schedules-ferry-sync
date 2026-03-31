@@ -62,17 +62,12 @@ def detect_yaeyama_status():
     soup = BeautifulSoup(res.text, "lxml")
     text = soup.get_text("\n", strip=True)
 
-    # いまは簡易判定
-    # 後で八重山観光フェリーのHTML構造に合わせて改善する
+    print("=================================")
+    print("YAEYAMA TEXT SAMPLE")
+    print("=================================")
+    print(text[:2000])
+
     status = "unknown"
-
-    if "通常運航" in text:
-        status = "normal"
-    if "欠航" in text:
-        status = "cancelled"
-
-    print("YAEYAMA STATUS:", status)
-
     return status
 
 
