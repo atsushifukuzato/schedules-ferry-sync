@@ -108,6 +108,42 @@ def detect_yaeyama_status():
     for name in route_names:
         print(name)
 
+    # 航路 → import_key マッピング
+    route_key_map = {
+        "竹富航路": "yaeyama-kanko-ferry__石垣→竹富",
+        "小浜航路": "yaeyama-kanko-ferry__石垣→小浜",
+        "黒島航路": "yaeyama-kanko-ferry__石垣→黒島",
+        "西表大原航路": "yaeyama-kanko-ferry__石垣→西表大原",
+        "西表上原航路": "yaeyama-kanko-ferry__石垣→西表上原",
+        "鳩間航路": "yaeyama-kanko-ferry__石垣→鳩間",
+        "上原-鳩間航路": "yaeyama-kanko-ferry__西表上原→鳩間",
+    }
+
+    print("=================================")
+    print("YAEYAMA ROUTE IMPORT KEYS")
+    print("=================================")
+
+    for name in route_names:
+        print(name, "->", route_key_map.get(name, "NOT FOUND"))
+
+    circle_count = text.count("〇")
+    cross_count = text.count("×")
+
+    print("YAEYAMA CIRCLE COUNT:", circle_count)
+    print("YAEYAMA CROSS COUNT:", cross_count)
+
+    if cross_count > 0:
+        return "cancelled"
+
+    return "normal"
+
+    print("=================================")
+    print("YAEYAMA ROUTE NAMES")
+    print("=================================")
+
+    for name in route_names:
+        print(name)
+
     circle_count = 0
     cross_count = 0
 
