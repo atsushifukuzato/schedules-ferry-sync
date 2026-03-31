@@ -273,7 +273,11 @@ def main():
         print("YAEYAMA is normal -> skip save")
 
     elif cancelled_sailings:
+        print("YAEYAMA will send cancelled sailings count:", len(cancelled_sailings))
+
         for sailing_data in cancelled_sailings:
+            print("YAEYAMA SEND TARGET:", sailing_data)
+
             send_to_bubble(
                 operator_name="Yaeyama Kanko Ferry",
                 status="cancelled",
