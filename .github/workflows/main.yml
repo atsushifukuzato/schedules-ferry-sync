@@ -1,0 +1,24 @@
+name: Ferry Status Sync
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    # 日本時間 05:35
+    - cron: '35 20 * * *'
+    # 日本時間 07:05
+    - cron: '5 22 * * *'
+    # 日本時間 10:05
+    - cron: '5 1 * * *'
+    # 日本時間 13:05
+    - cron: '5 4 * * *'
+    # 日本時間 16:05
+    - cron: '5 7 * * *'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Test run
+        run: echo "Ferry sync running..."
