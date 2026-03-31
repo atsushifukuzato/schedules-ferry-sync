@@ -1,3 +1,4 @@
+import re
 import time
 from datetime import datetime
 
@@ -70,6 +71,33 @@ def get_yaeyama_response():
     raise last_error
 
 
+def normalize_mark(mark):
+    if mark in ("〇", "○"):
+        return "circle"
+    if mark in ("×", "✕", "✖"):
+        return "cross"
+    return ""
+
+
+def extract_mark_and_time(line):
+    """
+    例:
+      '〇 08:30'
+      '○ 08:30'
+      '× 09:00'
+      '✕ 13:30'
+    のような行から、mark と departure_hhmm を返す
+    """
+    m = re.match(r"^\s*([〇○×✕✖])\s*([0-2]?\d:\d{2})\s*$", line)
+    if not m:
+        return None, None
+
+    raw_mark = m.group(1)
+    departure_hhmm = m.group(2)
+
+    return normalize_mark(raw_mark), departure_hhmm
+
+
 def detect_yaeyama_status():
     print("=================================")
     print("FETCHING YAEYAMA")
@@ -79,7 +107,6 @@ def detect_yaeyama_status():
 
     soup = BeautifulSoup(res.text, "lxml")
     text = soup.get_text("\n", strip=True)
-
     lines = [line.strip() for line in text.split("\n") if line.strip()]
 
     route_names = []
@@ -99,7 +126,8 @@ def detect_yaeyama_status():
             continue
         if line in exclude_names:
             continue
-        route_names.append(line)
+        if line not in route_names:
+            route_names.append(line)
 
     print("=================================")
     print("YAEYAMA ROUTE NAMES")
@@ -124,47 +152,44 @@ def detect_yaeyama_status():
         print(name, "->", route_key_map.get(name, "NOT FOUND"))
 
     print("=================================")
-    print("YAEYAMA FIRST TIMES BY ROUTE")
+    print("YAEYAMA CANCELLED SAILINGS")
     print("=================================")
 
-    route_first_times = {}
+    cancelled_sailings = []
+    circle_count = 0
+    cross_count = 0
 
     for i, line in enumerate(lines):
         if line not in route_names:
             continue
 
-        first_time = None
+        route_name = line
+        route_import_key = route_key_map.get(route_name, "")
 
         for next_line in lines[i + 1:i + 40]:
             if next_line in route_names:
                 break
 
-            if (
-                next_line.startswith("〇 ")
-                or next_line.startswith("○ ")
-                or next_line.startswith("× ")
-                or next_line.startswith("✕ ")
-            ):
-                parts = next_line.split(" ", 1)
-                if len(parts) == 2:
-                    first_time = parts[1].strip()
-                    break
+            mark, departure_hhmm = extract_mark_and_time(next_line)
+            if not mark or not departure_hhmm:
+                continue
 
-        route_first_times[line] = {
-            "route_import_key": route_key_map.get(line, ""),
-            "departure_hhmm": first_time,
-        }
-
-        print(
-            line,
-            "->",
-            first_time,
-            "->",
-            route_key_map.get(line, "NOT FOUND")
-        )
-
-    circle_count = text.count("〇")
-    cross_count = text.count("×")
+            if mark == "circle":
+                circle_count += 1
+            elif mark == "cross":
+                cross_count += 1
+                cancelled_sailings.append({
+                    "route_name": route_name,
+                    "route_import_key": route_import_key,
+                    "departure_hhmm": departure_hhmm,
+                })
+                print(
+                    route_name,
+                    "->",
+                    departure_hhmm,
+                    "->",
+                    route_import_key
+                )
 
     print("YAEYAMA CIRCLE COUNT:", circle_count)
     print("YAEYAMA CROSS COUNT:", cross_count)
@@ -179,8 +204,9 @@ def detect_yaeyama_status():
         status = "unknown"
 
     print("YAEYAMA STATUS:", status)
+    print("YAEYAMA CANCELLED SAILINGS:", cancelled_sailings)
 
-    return status, route_first_times
+    return status, cancelled_sailings
 
 
 def send_to_bubble(
@@ -238,24 +264,34 @@ def main():
     time.sleep(1)
 
     # 八重山観光フェリー
-    yaeyama_status, yaeyama_routes = detect_yaeyama_status()
+    yaeyama_status, cancelled_sailings = detect_yaeyama_status()
 
     print("YAEYAMA STATUS:", yaeyama_status)
-    print("YAEYAMA ROUTE DATA:", yaeyama_routes)
+    print("YAEYAMA CANCELLED SAILINGS:", cancelled_sailings)
 
-    if yaeyama_status != "normal":
-        hatoma_data = yaeyama_routes.get("上原-鳩間航路", {})
+    if yaeyama_status == "normal":
+        print("YAEYAMA is normal -> skip save")
 
+    elif cancelled_sailings:
+        for sailing_data in cancelled_sailings:
+            send_to_bubble(
+                operator_name="Yaeyama Kanko Ferry",
+                status="cancelled",
+                service_date=service_date,
+                source_url=YAEYAMA_URL,
+                route_import_key=sailing_data.get("route_import_key", ""),
+                departure_hhmm=sailing_data.get("departure_hhmm", "")
+            )
+            time.sleep(0.3)
+
+    else:
+        print("YAEYAMA abnormal but no cancelled sailings parsed -> fallback send")
         send_to_bubble(
             operator_name="Yaeyama Kanko Ferry",
             status=yaeyama_status,
             service_date=service_date,
-            source_url=YAEYAMA_URL,
-            route_import_key=hatoma_data.get("route_import_key", ""),
-            departure_hhmm=hatoma_data.get("departure_hhmm", "")
+            source_url=YAEYAMA_URL
         )
-    else:
-        print("YAEYAMA is normal -> skip save")
 
     print("=================================")
     print("Sync finished")
