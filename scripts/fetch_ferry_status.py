@@ -178,39 +178,9 @@ def detect_yaeyama_status():
     else:
         status = "unknown"
 
-    return status, route_first_times
-
-    print("=================================")
-    print("YAEYAMA ROUTE NAMES")
-    print("=================================")
-
-    for name in route_names:
-        print(name)
-
-    circle_count = 0
-    cross_count = 0
-
-    for line in lines:
-        if line.startswith("〇") or line.startswith("○"):
-            circle_count += 1
-        elif line.startswith("×") or line.startswith("✕"):
-            cross_count += 1
-
-    print("YAEYAMA CIRCLE COUNT:", circle_count)
-    print("YAEYAMA CROSS COUNT:", cross_count)
-
-    if cross_count == 0 and circle_count > 0:
-        status = "normal"
-    elif cross_count > 0 and circle_count > 0:
-        status = "partial"
-    elif cross_count > 0 and circle_count == 0:
-        status = "cancelled"
-    else:
-        status = "unknown"
-
     print("YAEYAMA STATUS:", status)
 
-    return status
+    return status, route_first_times
 
 
 def send_to_bubble(
@@ -268,26 +238,24 @@ def main():
     time.sleep(1)
 
     # 八重山観光フェリー
-yaeyama_status, yaeyama_routes = detect_yaeyama_status()
+    yaeyama_status, yaeyama_routes = detect_yaeyama_status()
 
-print("YAEYAMA STATUS:", yaeyama_status)
-print("YAEYAMA ROUTE DATA:", yaeyama_routes)
+    print("YAEYAMA STATUS:", yaeyama_status)
+    print("YAEYAMA ROUTE DATA:", yaeyama_routes)
 
-if yaeyama_status != "normal":
+    if yaeyama_status != "normal":
+        hatoma_data = yaeyama_routes.get("上原-鳩間航路", {})
 
-    hatoma_data = yaeyama_routes.get("上原-鳩間航路", {})
-
-    send_to_bubble(
-        operator_name="Yaeyama Kanko Ferry",
-        status=yaeyama_status,
-        service_date=service_date,
-        source_url=YAEYAMA_URL,
-        route_import_key=hatoma_data.get("route_import_key", ""),
-        departure_hhmm=hatoma_data.get("departure_hhmm", "")
-    )
-
-else:
-    print("YAEYAMA is normal -> skip save")
+        send_to_bubble(
+            operator_name="Yaeyama Kanko Ferry",
+            status=yaeyama_status,
+            service_date=service_date,
+            source_url=YAEYAMA_URL,
+            route_import_key=hatoma_data.get("route_import_key", ""),
+            departure_hhmm=hatoma_data.get("departure_hhmm", "")
+        )
+    else:
+        print("YAEYAMA is normal -> skip save")
 
     print("=================================")
     print("Sync finished")
