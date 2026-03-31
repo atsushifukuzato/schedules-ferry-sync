@@ -38,9 +38,9 @@ if "上原" in status_line:
 print("STATUS:", status)
 
 payload = {
-    "company": "anei",
+    "operator": "Anei Kanko",
     "status": status,
-    "source_checked_at": datetime.now().isoformat()
+    "checked_at": datetime.now().isoformat()
 }
 
 print("Sending to Bubble...")
