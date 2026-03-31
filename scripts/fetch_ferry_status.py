@@ -104,11 +104,9 @@ def detect_yaeyama_status():
     print("=================================")
     print("YAEYAMA ROUTE NAMES")
     print("=================================")
-
     for name in route_names:
         print(name)
 
-    # 航路 → import_key マッピング
     route_key_map = {
         "竹富航路": "yaeyama-kanko-ferry__石垣→竹富",
         "小浜航路": "yaeyama-kanko-ferry__石垣→小浜",
@@ -122,9 +120,39 @@ def detect_yaeyama_status():
     print("=================================")
     print("YAEYAMA ROUTE IMPORT KEYS")
     print("=================================")
-
     for name in route_names:
         print(name, "->", route_key_map.get(name, "NOT FOUND"))
+
+    print("=================================")
+    print("YAEYAMA FIRST TIMES BY ROUTE")
+    print("=================================")
+
+    route_first_times = {}
+
+    for i, line in enumerate(lines):
+        if line not in route_names:
+            continue
+
+        # この航路名の次の行以降から、最初に出てくる 〇 HH:MM / ○ HH:MM / × HH:MM を拾う
+        first_time = None
+
+        for next_line in lines[i + 1:i + 40]:
+            if next_line in route_names:
+                break
+
+            if (
+                next_line.startswith("〇 ")
+                or next_line.startswith("○ ")
+                or next_line.startswith("× ")
+                or next_line.startswith("✕ ")
+            ):
+                parts = next_line.split(" ", 1)
+                if len(parts) == 2:
+                    first_time = parts[1].strip()
+                    break
+
+        route_first_times[line] = first_time
+        print(line, "->", first_time, "->", route_key_map.get(line, "NOT FOUND"))
 
     circle_count = text.count("〇")
     cross_count = text.count("×")
