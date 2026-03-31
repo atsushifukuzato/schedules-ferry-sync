@@ -37,13 +37,15 @@ def detect_anei_status():
 
     status = "unknown"
 
-    if "通常運航" in status_line:
+    if "運航未定" in status_line or "判断" in status_line:
+        status = "pending"
+    elif "通常運航" in status_line:
         status = "normal"
-    if "一部" in status_line:
+    elif "一部" in status_line:
         status = "partial"
-    if "欠航" in status_line:
+    elif "欠航" in status_line:
         status = "cancelled"
-    if "上原" in status_line:
+    elif "上原" in status_line:
         status = "uehara_cancelled"
 
     print("ANEI RAW:", status_line)
@@ -80,14 +82,6 @@ def normalize_mark(mark):
 
 
 def extract_mark_and_time(line):
-    """
-    例:
-      '〇 08:30'
-      '○ 08:30'
-      '× 09:00'
-      '✕ 13:30'
-    のような行から、mark と departure_hhmm を返す
-    """
     m = re.match(r"^\s*([〇○×✕✖])\s*([0-2]?\d:\d{2})\s*$", line)
     if not m:
         return None, None
@@ -249,53 +243,63 @@ def main():
     service_date = today_iso_date()
 
     # 安栄観光
-    anei_status = detect_anei_status()
+    try:
+        anei_status = detect_anei_status()
 
-    if anei_status != "normal":
-        send_to_bubble(
-            operator_name="Anei Kanko",
-            status=anei_status,
-            service_date=service_date,
-            source_url=ANEI_URL
-        )
-    else:
-        print("ANEI is normal -> skip save")
+        if anei_status != "normal":
+            send_to_bubble(
+                operator_name="Anei Kanko",
+                status=anei_status,
+                service_date=service_date,
+                source_url=ANEI_URL
+            )
+        else:
+            print("ANEI is normal -> skip save")
+
+    except Exception as e:
+        print("ANEI fetch/parse failed -> skip")
+        print("ERROR:", repr(e))
 
     time.sleep(1)
 
     # 八重山観光フェリー
-    yaeyama_status, cancelled_sailings = detect_yaeyama_status()
+    try:
+        yaeyama_status, cancelled_sailings = detect_yaeyama_status()
 
-    print("YAEYAMA STATUS:", yaeyama_status)
-    print("YAEYAMA CANCELLED SAILINGS:", cancelled_sailings)
+        print("YAEYAMA STATUS:", yaeyama_status)
+        print("YAEYAMA CANCELLED SAILINGS:", cancelled_sailings)
 
-    if yaeyama_status == "normal":
-        print("YAEYAMA is normal -> skip save")
+        if yaeyama_status == "normal":
+            print("YAEYAMA is normal -> skip save")
 
-    elif cancelled_sailings:
-        print("YAEYAMA will send cancelled sailings count:", len(cancelled_sailings))
+        elif cancelled_sailings:
+            print("YAEYAMA will send cancelled sailings count:", len(cancelled_sailings))
 
-        for sailing_data in cancelled_sailings:
-            print("YAEYAMA SEND TARGET:", sailing_data)
+            for sailing_data in cancelled_sailings:
+                print("YAEYAMA SEND TARGET:", sailing_data)
 
+                send_to_bubble(
+                    operator_name="Yaeyama Kanko Ferry",
+                    status="cancelled",
+                    service_date=service_date,
+                    source_url=YAEYAMA_URL,
+                    route_import_key=sailing_data.get("route_import_key", ""),
+                    departure_hhmm=sailing_data.get("departure_hhmm", "")
+                )
+                time.sleep(0.3)
+
+        else:
+            print("YAEYAMA abnormal but no cancelled sailings parsed -> fallback send")
             send_to_bubble(
                 operator_name="Yaeyama Kanko Ferry",
-                status="cancelled",
+                status=yaeyama_status,
                 service_date=service_date,
-                source_url=YAEYAMA_URL,
-                route_import_key=sailing_data.get("route_import_key", ""),
-                departure_hhmm=sailing_data.get("departure_hhmm", "")
+                source_url=YAEYAMA_URL
             )
-            time.sleep(0.3)
 
-    else:
-        print("YAEYAMA abnormal but no cancelled sailings parsed -> fallback send")
-        send_to_bubble(
-            operator_name="Yaeyama Kanko Ferry",
-            status=yaeyama_status,
-            service_date=service_date,
-            source_url=YAEYAMA_URL
-        )
+    except Exception as e:
+        print("YAEYAMA fetch/parse failed -> skip")
+        print("ERROR:", repr(e))
 
     print("=================================")
     print("Sync finished")
