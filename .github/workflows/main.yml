@@ -3,11 +3,6 @@ name: Ferry Status Sync
 on:
   workflow_dispatch:
 
-  schedule:
-    - cron: '0 21 * * *'   # 06:00 JST
-    - cron: '5 22 * * *'   # 07:05 JST
-    - cron: '5 4 * * *'    # 13:05 JST
-
 jobs:
   sync:
     runs-on: ubuntu-latest
