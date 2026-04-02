@@ -3,19 +3,16 @@ name: Ferry Status Sync
 on:
   workflow_dispatch:
   schedule:
-    # ===== 朝の運行状況 (05:20〜07:00 JST) =====
-    - cron: '20 20 * * *'  # 05:20 JST
-    - cron: '40 20 * * *'  # 05:40 JST
-    - cron: '0 21 * * *'   # 06:00 JST
-    - cron: '20 21 * * *'  # 06:20 JST
-    - cron: '40 21 * * *'  # 06:40 JST
-
-    # ===== 波照間 (10:50〜12:10 JST) =====
-    - cron: '50 1 * * *'   # 10:50 JST
-    - cron: '10 2 * * *'   # 11:10 JST
-    - cron: '30 2 * * *'   # 11:30 JST
-    - cron: '50 2 * * *'   # 11:50 JST
-    - cron: '10 3 * * *'   # 12:10 JST
+    - cron: '20 20 * * *'
+    - cron: '40 20 * * *'
+    - cron: '0 21 * * *'
+    - cron: '20 21 * * *'
+    - cron: '40 21 * * *'
+    - cron: '50 1 * * *'
+    - cron: '10 2 * * *'
+    - cron: '30 2 * * *'
+    - cron: '50 2 * * *'
+    - cron: '10 3 * * *'
 
 concurrency:
   group: ferry-status-sync
@@ -25,6 +22,9 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      BUBBLE_BASE_URL: ${{ secrets.BUBBLE_BASE_URL }}
+      BUBBLE_API_TOKEN: ${{ secrets.BUBBLE_API_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -36,6 +36,15 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      - name: Debug env presence
+        run: |
+          if [ -z "$BUBBLE_BASE_URL" ]; then
+            echo "BUBBLE_BASE_URL is empty"
+            exit 1
+          else
+            echo "BUBBLE_BASE_URL is set"
+          fi
 
       - name: Run script
         run: python scripts/fetch_ferry_status.py
