@@ -32,6 +32,7 @@ PENDING_KEYWORDS = [
 ]
 
 TIME_RE = re.compile(r"^\d{1,2}:\d{2}$")
+PAIR_RE = re.compile(r"([〇◯△✕×])\s*(\d{1,2}:\d{2})")
 
 
 @dataclass(frozen=True)
@@ -73,7 +74,7 @@ class AbnormalCandidate:
 class AbnormalSailing:
     operator_bubble_name_en: str
     route_import_key: str
-    departure_hhmm: str  # CSV の正規値
+    departure_hhmm: str
     status: str
     source_url: str
     raw_status_text: str
@@ -159,8 +160,7 @@ def normalize_text(text: str) -> str:
 
 
 def normalize_hhmm_for_match(text: str) -> str:
-    t = normalize_text(text)
-    t = t.replace("：", ":")
+    t = normalize_text(text).replace("：", ":")
     m = re.match(r"^(\d{1,2}):(\d{2})$", t)
     if not m:
         return t
@@ -277,7 +277,6 @@ def build_route_lookup(route_csv_path: str) -> Dict[Tuple[str, str, str], str]:
             if not operator_key or not import_key or not section_label or not departure_label:
                 continue
 
-            # 安栄の inter-island は current page から一意に取りづらいため対象外
             if operator_key == "anei" and section_label == "上原-鳩間航路":
                 continue
 
@@ -307,7 +306,6 @@ def build_canonical_sailing_lookup(
 
             canonical = departure_hhmm_raw.replace("：", ":")
             match_key = normalize_hhmm_for_match(canonical)
-
             lookup[(operator_key, route_import_key, match_key)] = canonical
 
     return lookup
@@ -338,6 +336,15 @@ def classify_status_from_symbol_or_text(text: str) -> Optional[str]:
     return None
 
 
+def classify_status_from_symbol(symbol: str) -> Optional[str]:
+    s = normalize_text(symbol)
+    if s in {"✕", "×"}:
+        return "cancelled"
+    if s == "△":
+        return "pending"
+    return None
+
+
 def find_section_ranges(lines: List[str], section_labels: List[str]) -> List[Tuple[str, int, int]]:
     positions: List[Tuple[str, int]] = []
     section_set = set(section_labels)
@@ -354,50 +361,83 @@ def find_section_ranges(lines: List[str], section_labels: List[str]) -> List[Tup
     return ranges
 
 
+def split_subblocks_by_departure_label(
+    block_lines: List[str],
+    departure_labels: set[str],
+) -> List[Tuple[str, List[str]]]:
+    """
+    例:
+    石垣発
+    ◯ 08:00 ✕ 11:45 ◯ 15:00
+    波照間発
+    ◯ 09:50 ✕ 13:00 ◯ 16:50
+    のような block を
+    [
+      ("石垣発", [...]),
+      ("波照間発", [...]),
+    ]
+    に分ける
+    """
+    results: List[Tuple[str, List[str]]] = []
+    current_label: Optional[str] = None
+    current_lines: List[str] = []
+
+    for line in block_lines:
+        if line in departure_labels:
+            if current_label is not None:
+                results.append((current_label, current_lines))
+            current_label = line
+            current_lines = []
+        else:
+            if current_label is not None:
+                current_lines.append(line)
+
+    if current_label is not None:
+        results.append((current_label, current_lines))
+
+    return results
+
+
 def parse_anei_abnormal_candidates(html: str) -> List[AbnormalCandidate]:
+    """
+    安栄観光は「時刻を見つけて後ろ数行を見る」方式だと別便の記号を巻き込むので、
+    departure_label ごとのサブブロックを作り、その中の「記号 + 時刻」のペアを直接読む。
+    """
     operator_key = "anei"
     section_labels = ["波照間航路", "上原航路", "鳩間航路", "大原航路", "竹富航路", "小浜航路", "黒島航路"]
+    departure_labels = {"石垣発", "波照間発", "上原発", "鳩間発", "大原発", "竹富発", "小浜発", "黒島発"}
+
     lines = extract_lines(html)
     ranges = find_section_ranges(lines, section_labels)
-
     result: List[AbnormalCandidate] = []
-    dep_labels = {"石垣発", "波照間発", "上原発", "鳩間発", "大原発", "竹富発", "小浜発", "黒島発"}
 
     for section_label, start, end in ranges:
-        block = lines[start:end]
-        current_departure_label: Optional[str] = None
+        block_lines = lines[start:end]
+        subblocks = split_subblocks_by_departure_label(block_lines, departure_labels)
 
-        i = 0
-        while i < len(block):
-            line = block[i]
+        for departure_label, subblock_lines in subblocks:
+            joined = " ".join(subblock_lines)
+            pairs = PAIR_RE.findall(joined)
 
-            if line in dep_labels:
-                current_departure_label = line
-                i += 1
+            if not pairs:
                 continue
 
-            if TIME_RE.match(line) and current_departure_label:
-                departure_hhmm_raw = line
-                nearby_lines = block[i + 1:i + 4]
-                raw_status_text = " ".join(nearby_lines)
-                status = classify_status_from_symbol_or_text(raw_status_text)
+            for symbol, departure_hhmm_raw in pairs:
+                status = classify_status_from_symbol(symbol)
+                if not status:
+                    continue
 
-                if status:
-                    result.append(
-                        AbnormalCandidate(
-                            operator_key=operator_key,
-                            section_label=section_label,
-                            departure_label=current_departure_label,
-                            departure_hhmm_raw=departure_hhmm_raw,
-                            status=status,
-                            raw_status_text=raw_status_text,
-                            source_url=ANEI_URL,
-                        )
+                result.append(
+                    AbnormalCandidate(
+                        operator_key=operator_key,
+                        section_label=section_label,
+                        departure_label=departure_label,
+                        departure_hhmm_raw=departure_hhmm_raw,
+                        status=status,
+                        raw_status_text=f"{symbol} {departure_hhmm_raw}",
+                        source_url=ANEI_URL,
                     )
-                i += 1
-                continue
-
-            i += 1
+                )
 
     return result
 
@@ -408,7 +448,7 @@ def parse_ykf_abnormal_candidates(html: str, service_date: date) -> List[Abnorma
     lines = extract_lines(html)
     ranges = find_section_ranges(lines, section_labels)
 
-    _ = service_date  # 取得日基準で動かすが、ここでは時刻抽出にのみ利用
+    _ = service_date
 
     result: List[AbnormalCandidate] = []
     dep_label_pattern = re.compile(r"(\S+発)")
@@ -449,7 +489,7 @@ def parse_ykf_abnormal_candidates(html: str, service_date: date) -> List[Abnorma
                     )
                     continue
 
-                status = classify_status_from_symbol_or_text(symbol)
+                status = classify_status_from_symbol(symbol)
                 if not status:
                     continue
 
@@ -461,7 +501,7 @@ def parse_ykf_abnormal_candidates(html: str, service_date: date) -> List[Abnorma
                         departure_label=departure_label,
                         departure_hhmm_raw=departure_hhmm_raw,
                         status=status,
-                        raw_status_text=line,
+                        raw_status_text=f"{symbol} {departure_hhmm_raw}",
                         source_url=YKF_URL,
                     )
                 )
