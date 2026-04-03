@@ -3,6 +3,17 @@ name: Ferry Status Sync
 on:
   workflow_dispatch:
 
+  schedule:
+    - cron: '20 20 * * *'
+    - cron: '40 20 * * *'
+    - cron: '0 21 * * *'
+    - cron: '20 21 * * *'
+    - cron: '40 21 * * *'
+    - cron: '50 1 * * *'
+    - cron: '10 2 * * *'
+    - cron: '30 2 * * *'
+    - cron: '50 2 * * *'
+
 concurrency:
   group: ferry-status-sync
   cancel-in-progress: true
@@ -11,9 +22,11 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
     env:
-      BUBBLE_BASE_URL: ${{ secrets.BUBBLE_BASE_URL }}
-      BUBBLE_API_TOKEN: ${{ secrets.BUBBLE_API_TOKEN }}
+      BUBBLE_BASE_URL: https://schedules.jp/api/1.1/wf
+      FERRY_SAILING_CSV: data/FerrySailing_COMPLETE_FINAL_with_conditions_corrected.csv
+      WF_NAME: receive_ferry_status
 
     steps:
       - uses: actions/checkout@v4
@@ -24,23 +37,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Debug env presence
-        run: |
-          if [ -z "$BUBBLE_BASE_URL" ]; then
-            echo "BUBBLE_BASE_URL is empty"
-            exit 1
-          else
-            echo "BUBBLE_BASE_URL is set"
-          fi
-
-          if [ -z "$BUBBLE_API_TOKEN" ]; then
-            echo "BUBBLE_API_TOKEN is empty"
-            exit 1
-          else
-            echo "BUBBLE_API_TOKEN is set"
-          fi
+        run: pip install requests beautifulsoup4
 
       - name: Run script
         run: python scripts/fetch_ferry_status.py
