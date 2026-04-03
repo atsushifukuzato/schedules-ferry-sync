@@ -1,33 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-fetch_ferry_status.py
-
-確認済み仕様のみで作成
-- 安栄観光 / 八重山観光フェリーの運航状況ページを取得
-- FerrySailing CSV を読み込む
-- Bubble Backend workflow `receive_ferry_status` に POST する
-- Bubble Data API /obj/... は使わない
-
-確認済み事項
-- API workflow 名: receive_ferry_status
-- 送信パラメータ:
-    operator (text)
-    status (text)
-    checked_at (date)
-    service_date (date)
-    source_url (text)
-    route_import_key (text)
-    departure_hhmm (text)
-- route_import_key に渡す値は import_key
-- FerrySailing CSV には import_key 列はない
-- FerrySailing CSV の route 列の値は、FerryRoute.import_key と一致する
-- service_date は date 型で送る
-- checked_at は毎回 Python から送る
-- source_url は operator ごとに固定
-"""
-
 from __future__ import annotations
 
 import csv
@@ -142,121 +115,96 @@ def extract_anei_summary_text(html: str) -> str:
     return full_text[:500]
 
 
-def parse_anei_status(summary_text: str) -> Tuple[str, str]:
+def parse_anei_status(summary_text: str) -> str:
     text = normalize_text(summary_text)
     if "欠航" in text:
-        return "cancelled", text
-    return "pending", text
+        return "cancelled"
+    return "pending"
 
 
-def parse_ykf_route_statuses(html: str) -> Dict[str, Dict[str, str]]:
+def parse_ykf_route_statuses(html: str) -> Dict[str, str]:
     """
-    八重山観光フェリーのページから、航路ラベルごとの状態を抽出する。
-    返り値のキーは route_import_key ではなく route_name 相当の簡易ラベル。
-    その後 ROUTE_NAME_TO_IMPORT_KEY で import_key に変換する。
+    八重山観光フェリーのページから航路ごとの状態を抽出。
+    戻り値のキーは route_import_key。
     """
     soup = BeautifulSoup(html, "html.parser")
     text = soup.get_text("\n", strip=True)
     lines = [normalize_text(line) for line in text.splitlines() if normalize_text(line)]
 
-    alias_to_route_name = {
-        "竹富航路": "石垣→竹富",
-        "小浜航路": "石垣→小浜",
-        "黒島航路": "石垣→黒島",
-        "西表大原航路": "石垣→西表大原",
-        "西表上原航路": "石垣→西表上原",
-        "鳩間航路": "石垣→鳩間",
-        "上原-鳩間航路": "西表上原→鳩間",
+    route_name_to_import_key = {
+        "竹富航路": "yaeyama-kanko-ferry__石垣→竹富",
+        "小浜航路": "yaeyama-kanko-ferry__石垣→小浜",
+        "黒島航路": "yaeyama-kanko-ferry__石垣→黒島",
+        "西表大原航路": "yaeyama-kanko-ferry__石垣→西表大原",
+        "西表上原航路": "yaeyama-kanko-ferry__石垣→西表上原",
+        "鳩間航路": "yaeyama-kanko-ferry__石垣→鳩間",
+        "上原-鳩間航路": "yaeyama-kanko-ferry__西表上原→鳩間",
     }
 
-    results: Dict[str, Dict[str, str]] = {}
-    current_route_name: Optional[str] = None
+    results: Dict[str, str] = {}
+    current_import_key: Optional[str] = None
     buffer: List[str] = []
 
     def flush() -> None:
-        nonlocal current_route_name, buffer
-        if not current_route_name:
+        nonlocal current_import_key, buffer
+        if not current_import_key:
             return
         note = normalize_text(" ".join(buffer))
         status = "cancelled" if "欠航" in note else "pending"
-        results[current_route_name] = {"status": status, "note": note}
+        results[current_import_key] = status
         buffer = []
 
     for line in lines:
-        if line in alias_to_route_name:
+        if line in route_name_to_import_key:
             flush()
-            current_route_name = alias_to_route_name[line]
+            current_import_key = route_name_to_import_key[line]
             buffer = []
             continue
 
-        if current_route_name:
+        if current_import_key:
             buffer.append(line)
 
     flush()
     return results
 
 
-ROUTE_NAME_TO_IMPORT_KEY = {
-    ("安栄観光", "石垣→竹富"): "anei-kanko__石垣→竹富",
-    ("安栄観光", "石垣→小浜"): "anei-kanko__石垣→小浜",
-    ("安栄観光", "石垣→黒島"): "anei-kanko__石垣→黒島",
-    ("安栄観光", "石垣→西表大原"): "anei-kanko__石垣→西表大原",
-    ("安栄観光", "石垣→西表上原"): "anei-kanko__石垣→西表上原",
-    ("安栄観光", "石垣→鳩間"): "anei-kanko__石垣→鳩間",
-    ("安栄観光", "西表上原→鳩間"): "anei-kanko__西表上原→鳩間",
-
-    ("八重山観光フェリー", "石垣→竹富"): "yaeyama-kanko-ferry__石垣→竹富",
-    ("八重山観光フェリー", "石垣→小浜"): "yaeyama-kanko-ferry__石垣→小浜",
-    ("八重山観光フェリー", "石垣→黒島"): "yaeyama-kanko-ferry__石垣→黒島",
-    ("八重山観光フェリー", "石垣→西表大原"): "yaeyama-kanko-ferry__石垣→西表大原",
-    ("八重山観光フェリー", "石垣→西表上原"): "yaeyama-kanko-ferry__石垣→西表上原",
-    ("八重山観光フェリー", "石垣→鳩間"): "yaeyama-kanko-ferry__石垣→鳩間",
-    ("八重山観光フェリー", "西表上原→鳩間"): "yaeyama-kanko-ferry__西表上原→鳩間",
-}
-
-
-def build_status_map_for_today() -> Dict[Tuple[str, str], Tuple[str, str, str]]:
+def build_status_map_for_today() -> Dict[Tuple[str, str], Tuple[str, str]]:
     """
     戻り値:
     {
-      (operator, route_import_key): (status, note, source_url)
+      (operator, route_import_key): (status, source_url)
     }
     """
     session = build_session()
 
     anei_html = get_with_retry(session, ANEI_URL, retries=2, delay_sec=3)
     anei_summary = extract_anei_summary_text(anei_html)
-    anei_status, anei_note = parse_anei_status(anei_summary)
+    anei_status = parse_anei_status(anei_summary)
 
     ykf_html = get_with_retry(session, YKF_URL, retries=2, delay_sec=3)
-    ykf_route_name_statuses = parse_ykf_route_statuses(ykf_html)
+    ykf_route_statuses = parse_ykf_route_statuses(ykf_html)
 
-    status_map: Dict[Tuple[str, str], Tuple[str, str, str]] = {}
+    status_map: Dict[Tuple[str, str], Tuple[str, str]] = {}
 
-    # 安栄観光はページ全体の判定をそのまま全航路に適用
-    for (operator, route_name), route_import_key in ROUTE_NAME_TO_IMPORT_KEY.items():
-        if operator == "安栄観光":
-            status_map[(operator, route_import_key)] = (anei_status, anei_note, ANEI_URL)
+    # 安栄観光はページ全体の判定を、そのまま安栄便すべてに適用
+    # route_import_key は CSV 側から受け取るので、ここでは operator 単位のデフォルトとして扱う
+    # 実際の送信時に operator=安栄観光 の便はすべて anei_status を使う
+    status_map[("安栄観光", "__DEFAULT__")] = (anei_status, ANEI_URL)
 
-    # 八重山観光フェリーは航路ごとの判定
-    for route_name, row in ykf_route_name_statuses.items():
-        key = ("八重山観光フェリー", route_name)
-        route_import_key = ROUTE_NAME_TO_IMPORT_KEY.get(key)
-        if not route_import_key:
-            continue
-        status_map[("八重山観光フェリー", route_import_key)] = (row["status"], row["note"], YKF_URL)
+    # 八重山観光フェリーは route ごと
+    for route_import_key, status in ykf_route_statuses.items():
+        status_map[("八重山観光フェリー", route_import_key)] = (status, YKF_URL)
 
     return status_map
 
 
 class BubbleWorkflowClient:
-    def __init__(self, base_url: str, workflow_name: str, api_token: str):
+    def __init__(self, base_url: str, workflow_name: str):
         self.base_url = base_url.rstrip("/")
         self.workflow_name = workflow_name
         self.session = requests.Session()
         self.session.headers.update(
             {
-                "Authorization": f"Bearer {api_token}",
                 "Content-Type": "application/json",
             }
         )
@@ -288,7 +236,6 @@ class BubbleWorkflowClient:
 def main() -> int:
     try:
         bubble_base_url = env_required("BUBBLE_BASE_URL")
-        bubble_api_token = env_required("BUBBLE_API_TOKEN")
         ferry_sailing_csv = env_required("FERRY_SAILING_CSV")
         workflow_name = os.getenv("WF_NAME", "receive_ferry_status").strip()
 
@@ -299,9 +246,9 @@ def main() -> int:
         print("=" * 50)
         print("SCHEDULES Ferry Sync Started")
         print("=" * 50)
-        print(f"checked_at : {checked_at_iso}")
+        print(f"checked_at  : {checked_at_iso}")
         print(f"service_date: {service_date_iso}")
-        print(f"csv_path   : {ferry_sailing_csv}")
+        print(f"csv_path    : {ferry_sailing_csv}")
 
         sailings = load_sailings(ferry_sailing_csv)
         print(f"sailings loaded: {len(sailings)}")
@@ -312,7 +259,6 @@ def main() -> int:
         bubble = BubbleWorkflowClient(
             base_url=bubble_base_url,
             workflow_name=workflow_name,
-            api_token=bubble_api_token,
         )
 
         sent = 0
@@ -323,8 +269,12 @@ def main() -> int:
         print("=" * 50)
 
         for sailing in sailings:
-            key = (sailing.operator, sailing.route_import_key)
-            row = status_map.get(key)
+            if sailing.operator == "安栄観光":
+                row = status_map.get(("安栄観光", "__DEFAULT__"))
+            elif sailing.operator == "八重山観光フェリー":
+                row = status_map.get(("八重山観光フェリー", sailing.route_import_key))
+            else:
+                row = None
 
             if row is None:
                 skipped += 1
@@ -335,7 +285,8 @@ def main() -> int:
                 )
                 continue
 
-            status, note, source_url = row
+            status, source_url = row
+
             bubble.send_status(
                 operator=sailing.operator,
                 status=status,
