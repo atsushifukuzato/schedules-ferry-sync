@@ -1,0 +1,34 @@
+import_key,operator,from_port,to_port,route_name,route_name_en,duration_min_min,duration_min_max,via_text,notes,sort_order,is_active
+anei-kanko__石垣→竹富,安栄観光,石垣港離島ターミナル,竹富港,石垣→竹富,Ishigaki to Taketomi,10,15,,,1,yes
+anei-kanko__竹富→石垣,安栄観光,竹富港,石垣港離島ターミナル,竹富→石垣,Taketomi to Ishigaki,10,15,,,2,yes
+anei-kanko__石垣→小浜,安栄観光,石垣港離島ターミナル,小浜港,石垣→小浜,Ishigaki to Kohama,25,30,,,3,yes
+anei-kanko__小浜→石垣,安栄観光,小浜港,石垣港離島ターミナル,小浜→石垣,Kohama to Ishigaki,25,30,,,4,yes
+anei-kanko__石垣→黒島,安栄観光,石垣港離島ターミナル,黒島港,石垣→黒島,Ishigaki to Kuroshima,25,30,,,5,yes
+anei-kanko__黒島→石垣,安栄観光,黒島港,石垣港離島ターミナル,黒島→石垣,Kuroshima to Ishigaki,25,30,,,6,yes
+anei-kanko__石垣→西表大原,安栄観光,石垣港離島ターミナル,西表大原港,石垣→西表大原,Ishigaki to Iriomote Ohara,40,45,,,7,yes
+anei-kanko__西表大原→石垣,安栄観光,西表大原港,石垣港離島ターミナル,西表大原→石垣,Iriomote Ohara to Ishigaki,40,45,,,8,yes
+anei-kanko__石垣→西表上原,安栄観光,石垣港離島ターミナル,西表上原港,石垣→西表上原,Ishigaki to Iriomote Uehara,45,55,鳩間経由あり,,9,yes
+anei-kanko__西表上原→石垣,安栄観光,西表上原港,石垣港離島ターミナル,西表上原→石垣,Iriomote Uehara to Ishigaki,45,55,鳩間経由あり,,10,yes
+anei-kanko__石垣→鳩間,安栄観光,石垣港離島ターミナル,鳩間港,石垣→鳩間,Ishigaki to Hatoma,45,60,上原経由あり,,11,yes
+anei-kanko__鳩間→石垣,安栄観光,鳩間港,石垣港離島ターミナル,鳩間→石垣,Hatoma to Ishigaki,45,60,上原経由あり,,12,yes
+anei-kanko__石垣→波照間,安栄観光,石垣港離島ターミナル,波照間港,石垣→波照間,Ishigaki to Hateruma,60,90,,,13,yes
+anei-kanko__波照間→石垣,安栄観光,波照間港,石垣港離島ターミナル,波照間→石垣,Hateruma to Ishigaki,60,90,,,14,yes
+yaeyama-kanko-ferry__石垣→竹富,八重山観光フェリー,石垣港離島ターミナル,竹富港,石垣→竹富,Ishigaki to Taketomi,10,15,,,15,yes
+yaeyama-kanko-ferry__竹富→石垣,八重山観光フェリー,竹富港,石垣港離島ターミナル,竹富→石垣,Taketomi to Ishigaki,10,15,,,16,yes
+yaeyama-kanko-ferry__石垣→小浜,八重山観光フェリー,石垣港離島ターミナル,小浜港,石垣→小浜,Ishigaki to Kohama,25,30,,,17,yes
+yaeyama-kanko-ferry__小浜→石垣,八重山観光フェリー,小浜港,石垣港離島ターミナル,小浜→石垣,Kohama to Ishigaki,25,30,,,18,yes
+yaeyama-kanko-ferry__石垣→黒島,八重山観光フェリー,石垣港離島ターミナル,黒島港,石垣→黒島,Ishigaki to Kuroshima,25,30,,,19,yes
+yaeyama-kanko-ferry__黒島→石垣,八重山観光フェリー,黒島港,石垣港離島ターミナル,黒島→石垣,Kuroshima to Ishigaki,25,30,,,20,yes
+yaeyama-kanko-ferry__石垣→西表大原,八重山観光フェリー,石垣港離島ターミナル,西表大原港,石垣→西表大原,Ishigaki to Iriomote Ohara,40,45,,,21,yes
+yaeyama-kanko-ferry__西表大原→石垣,八重山観光フェリー,西表大原港,石垣港離島ターミナル,西表大原→石垣,Iriomote Ohara to Ishigaki,40,45,,,22,yes
+yaeyama-kanko-ferry__石垣→西表上原,八重山観光フェリー,石垣港離島ターミナル,西表上原港,石垣→西表上原,Ishigaki to Iriomote Uehara,45,50,鳩間経由あり,,23,yes
+yaeyama-kanko-ferry__西表上原→石垣,八重山観光フェリー,西表上原港,石垣港離島ターミナル,西表上原→石垣,Iriomote Uehara to Ishigaki,45,50,鳩間経由あり,,24,yes
+yaeyama-kanko-ferry__石垣→鳩間,八重山観光フェリー,石垣港離島ターミナル,鳩間港,石垣→鳩間,Ishigaki to Hatoma,45,50,上原経由あり,,25,yes
+yaeyama-kanko-ferry__鳩間→石垣,八重山観光フェリー,鳩間港,石垣港離島ターミナル,鳩間→石垣,Hatoma to Ishigaki,45,50,上原経由あり,,26,yes
+anei-kanko__西表大原→竹富,安栄観光,西表大原港,竹富港,西表大原→竹富,Iriomote Ohara to Taketomi,40,45,,ユーザー提供の2026年1月1日〜3月31日時刻表画像に基づく追加航路（片方向）,27,yes
+anei-kanko__西表上原→鳩間,安栄観光,西表上原港,鳩間港,西表上原→鳩間,Iriomote Uehara to Hatoma,10,15,,ユーザー提供の2026年1月1日〜3月31日時刻表画像に基づく追加航路,28,yes
+anei-kanko__鳩間→西表上原,安栄観光,鳩間港,西表上原港,鳩間→西表上原,Hatoma to Iriomote Uehara,10,15,,ユーザー提供の2026年1月1日〜3月31日時刻表画像に基づく追加航路,29,yes
+anei-kanko__竹富→黒島,安栄観光,竹富港,黒島港,竹富→黒島,Taketomi to Kuroshima,25,30,,ユーザー提供の2026年1月1日〜3月31日時刻表画像に基づく追加航路,30,yes
+anei-kanko__黒島→竹富,安栄観光,黒島港,竹富港,黒島→竹富,Kuroshima to Taketomi,25,30,,ユーザー提供の2026年1月1日〜3月31日時刻表画像に基づく追加航路,31,yes
+yaeyama-kanko-ferry__西表上原→鳩間,八重山観光フェリー,西表上原港,鳩間港,西表上原→鳩間,Iriomote Uehara to Hatoma,10,15,,ユーザー提供の2026年3月1日〜9月30日時刻表画像に基づく追加航路,32,yes
+yaeyama-kanko-ferry__鳩間→西表上原,八重山観光フェリー,鳩間港,西表上原港,鳩間→西表上原,Hatoma to Iriomote Uehara,10,15,,ユーザー提供の2026年3月1日〜9月30日時刻表画像に基づく追加航路,33,yes
