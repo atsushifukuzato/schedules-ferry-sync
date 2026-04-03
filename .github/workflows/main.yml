@@ -3,20 +3,6 @@ name: Ferry Status Sync
 on:
   workflow_dispatch:
 
-  schedule:
-    # ===== 朝の運行状況 (05:20〜07:00 JST) =====
-    - cron: '20 20 * * *'
-    - cron: '40 20 * * *'
-    - cron: '0 21 * * *'
-    - cron: '20 21 * * *'
-    - cron: '40 21 * * *'
-
-    # ===== 波照間 (10:50〜12:10 JST) =====
-    - cron: '50 1 * * *'
-    - cron: '10 2 * * *'
-    - cron: '30 2 * * *'
-    - cron: '50 2 * * *'
-
 concurrency:
   group: ferry-status-sync
   cancel-in-progress: true
