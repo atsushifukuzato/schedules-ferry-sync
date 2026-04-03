@@ -3,6 +3,20 @@ name: Ferry Status Sync
 on:
   workflow_dispatch:
 
+  schedule:
+    # 朝の運航状況
+    - cron: '20 20 * * *'  # 05:20 JST
+    - cron: '40 20 * * *'  # 05:40 JST
+    - cron: '0 21 * * *'   # 06:00 JST
+    - cron: '20 21 * * *'  # 06:20 JST
+    - cron: '40 21 * * *'  # 06:40 JST
+
+    # 波照間などの追加確認
+    - cron: '50 1 * * *'   # 10:50 JST
+    - cron: '10 2 * * *'   # 11:10 JST
+    - cron: '30 2 * * *'   # 11:30 JST
+    - cron: '50 2 * * *'   # 11:50 JST
+
 concurrency:
   group: ferry-status-sync
   cancel-in-progress: true
@@ -15,8 +29,13 @@ jobs:
     env:
       BUBBLE_BASE_URL: https://schedules.jp/api/1.1/wf
       FERRY_SAILING_CSV: data/FerrySailing_COMPLETE_FINAL_with_conditions_corrected.csv
+      FERRY_ROUTE_CSV: data/FerryRoute_with_import_key.csv
       WF_NAME: receive_ferry_status
       FERRY_SECRET: ${{ secrets.FERRY_SECRET }}
+
+      # 必要になったらここに追加
+      # 例: "未定,調整中,条件付,条件付き,一部欠航,運航可否確認中,見合わせ,一部運休,変更"
+      FERRY_PENDING_KEYWORDS: ""
 
     steps:
       - name: Checkout
@@ -29,32 +48,13 @@ jobs:
 
       - name: Install dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install requests beautifulsoup4
 
-      - name: Debug env
+      - name: Check files
         run: |
-          echo "Checking environment..."
-
-          if [ -z "$BUBBLE_BASE_URL" ]; then
-            echo "BUBBLE_BASE_URL is empty"
-            exit 1
-          else
-            echo "BUBBLE_BASE_URL OK"
-          fi
-
-          if [ -z "$FERRY_SECRET" ]; then
-            echo "FERRY_SECRET is empty"
-            exit 1
-          else
-            echo "FERRY_SECRET OK"
-          fi
-
-          if [ ! -f "$FERRY_SAILING_CSV" ]; then
-            echo "CSV not found: $FERRY_SAILING_CSV"
-            exit 1
-          else
-            echo "CSV found"
-          fi
+          test -f "$FERRY_SAILING_CSV"
+          test -f "$FERRY_ROUTE_CSV"
 
       - name: Run ferry sync
         run: python scripts/fetch_ferry_status.py
