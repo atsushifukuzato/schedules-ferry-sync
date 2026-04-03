@@ -47,7 +47,6 @@ class AbnormalCandidate:
     status: str
     raw_status_text: str
     source_url: str
-    page_date: str
 
 
 @dataclass(frozen=True)
@@ -58,7 +57,6 @@ class AbnormalSailing:
     status: str
     source_url: str
     raw_status_text: str
-    page_date: str
     section_label: str
     departure_label: str
 
@@ -132,10 +130,6 @@ def load_config() -> Config:
 
 def now_jst() -> datetime:
     return datetime.now(JST)
-
-
-def today_jst() -> date:
-    return now_jst().date()
 
 
 def normalize_text(text: str) -> str:
@@ -308,21 +302,11 @@ def find_section_ranges(lines: List[str], section_labels: List[str]) -> List[Tup
     return ranges
 
 
-def extract_anei_page_date(html: str, fallback_service_date: date) -> str:
-    text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
-    match = re.search(r"(20\d{2})\s*/\s*(\d{1,2})\s*/\s*(\d{1,2})", text)
-    if match:
-        y, m, d = match.groups()
-        return f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
-    return fallback_service_date.isoformat()
-
-
-def parse_anei_abnormal_candidates(html: str, service_date: date) -> List[AbnormalCandidate]:
+def parse_anei_abnormal_candidates(html: str) -> List[AbnormalCandidate]:
     operator = "安栄観光"
     section_labels = ["波照間航路", "上原航路", "鳩間航路", "大原航路", "竹富航路", "小浜航路", "黒島航路"]
     lines = extract_lines(html)
     ranges = find_section_ranges(lines, section_labels)
-    page_date = extract_anei_page_date(html, service_date)
 
     result: List[AbnormalCandidate] = []
     dep_labels = {"石垣発", "波照間発", "上原発", "鳩間発", "大原発", "竹富発", "小浜発", "黒島発"}
@@ -356,7 +340,6 @@ def parse_anei_abnormal_candidates(html: str, service_date: date) -> List[Abnorm
                             status=status,
                             raw_status_text=raw_status_text,
                             source_url=ANEI_URL,
-                            page_date=page_date,
                         )
                     )
                 i += 1
@@ -373,8 +356,8 @@ def parse_ykf_abnormal_candidates(html: str, service_date: date) -> List[Abnorma
     lines = extract_lines(html)
     ranges = find_section_ranges(lines, section_labels)
 
-    # ユーザー指定: YKFはページ上の日付が固定のため、取得日基準にする
-    page_date = service_date.isoformat()
+    # YKF はページ上の日付が固定のため、取得日基準にする
+    _ = service_date
 
     result: List[AbnormalCandidate] = []
     dep_label_pattern = re.compile(r"(\S+発)")
@@ -429,7 +412,6 @@ def parse_ykf_abnormal_candidates(html: str, service_date: date) -> List[Abnorma
                         status=status,
                         raw_status_text=line,
                         source_url=YKF_URL,
-                        page_date=page_date,
                     )
                 )
 
@@ -482,7 +464,6 @@ def resolve_candidates(
                 status=item.status,
                 source_url=item.source_url,
                 raw_status_text=item.raw_status_text,
-                page_date=item.page_date,
                 section_label=item.section_label,
                 departure_label=item.departure_label,
             )
@@ -497,10 +478,6 @@ def dedupe_resolved(items: List[AbnormalSailing]) -> List[AbnormalSailing]:
         key = (item.operator, item.route_import_key, item.departure_hhmm)
         dedup[key] = item
     return list(dedup.values())
-
-
-def build_status_key(service_date_iso: str, operator: str, route_import_key: str, departure_hhmm: str) -> str:
-    return f"{service_date_iso}|{operator}|{route_import_key}|{departure_hhmm}"
 
 
 class BubbleWorkflowClient:
@@ -520,10 +497,6 @@ class BubbleWorkflowClient:
         source_url: str,
         route_import_key: str,
         departure_hhmm: str,
-        raw_status_text: str,
-        page_date: str,
-        section_label: str,
-        departure_label: str,
     ) -> None:
         url = f"{self.base_url}/{self.workflow_name}"
         payload = {
@@ -535,12 +508,6 @@ class BubbleWorkflowClient:
             "source_url": source_url,
             "route_import_key": route_import_key,
             "departure_hhmm": departure_hhmm,
-            # 追加推奨項目（Bubble側で受け取れるなら保存）
-            "status_note": raw_status_text,
-            "page_date": page_date,
-            "section_label": section_label,
-            "departure_label": departure_label,
-            "status_key": build_status_key(service_date_iso, operator, route_import_key, departure_hhmm),
         }
         response = self.session.post(url, json=payload, timeout=DEFAULT_TIMEOUT)
         response.raise_for_status()
@@ -591,7 +558,7 @@ def main() -> int:
             verify=config.ykf_ssl_verify,
         )
 
-        anei_candidates = parse_anei_abnormal_candidates(anei_html, service_date)
+        anei_candidates = parse_anei_abnormal_candidates(anei_html)
         ykf_candidates = parse_ykf_abnormal_candidates(ykf_html, service_date)
         all_candidates = anei_candidates + ykf_candidates
 
@@ -640,7 +607,6 @@ def main() -> int:
                     section_label=item.section_label,
                     departure_label=item.departure_label,
                     raw_status_text=item.raw_status_text,
-                    page_date=item.page_date,
                     source_url=item.source_url,
                 )
 
@@ -652,10 +618,6 @@ def main() -> int:
                     source_url=item.source_url,
                     route_import_key=item.route_import_key,
                     departure_hhmm=item.departure_hhmm,
-                    raw_status_text=item.raw_status_text,
-                    page_date=item.page_date,
-                    section_label=item.section_label,
-                    departure_label=item.departure_label,
                 )
                 sent += 1
             except Exception as e:
