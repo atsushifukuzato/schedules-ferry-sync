@@ -382,6 +382,16 @@ def split_sections(lines: List[str], route_names: List[str]) -> Dict[str, List[s
 # =========================================================
 
 def parse_anei(html: str) -> Tuple[Optional[str], List[CandidateStatus]]:
+    """
+    安栄観光ページを方向ブロックごとに解析する
+
+    方針:
+    - 航路セクションごとに分割
+    - その中で「石垣発」「波照間発」などの方向ラベル位置を拾う
+    - 各方向ブロックを独立して解析
+    - ブロック内の「時刻 -> 記号」を対応付け
+    - cancelled / pending のみ採用
+    """
     _, lines = soup_text(html)
     page_service_date = extract_service_date(lines)
     sections = split_sections(lines, ANEI_ROUTE_NAMES)
@@ -391,94 +401,56 @@ def parse_anei(html: str) -> Tuple[Optional[str], List[CandidateStatus]]:
     for route_name, chunk in sections.items():
         log("DEBUG", "anei_route_section_found", route_name=route_name, lines=chunk[:120])
 
-        current_direction: Optional[str] = None
-        pending_time: Optional[str] = None
-
-        for line in chunk:
+        # この航路セクション内の方向ラベル位置を拾う
+        direction_positions: List[Tuple[int, str]] = []
+        for i, line in enumerate(chunk):
             if is_direction_label(line):
-                current_direction = line
-                pending_time = None
-                continue
+                direction_positions.append((i, line))
 
-            if current_direction is None:
-                continue
+        if not direction_positions:
+            log("WARNING", "anei_direction_labels_missing", route_name=route_name)
+            continue
 
-            # 単独時刻
-            maybe_time = extract_time(line)
-            if maybe_time and line == maybe_time:
-                pending_time = maybe_time
-                continue
+        # 各方向ラベルごとにブロックを切る
+        for n, (start_idx, direction_label) in enumerate(direction_positions):
+            end_idx = direction_positions[n + 1][0] if n + 1 < len(direction_positions) else len(chunk)
+            direction_block = chunk[start_idx:end_idx]
 
-            # 単独記号
-            if line in STATUS_SYMBOL_MAP:
-                if pending_time is None:
-                    continue
-
-                status = classify_status_from_symbol(line)
-                if status not in {"cancelled", "pending"}:
-                    pending_time = None
-                    continue
-
-                route_import_key = ANEI_ROUTE_DIRECTION_TO_KEY.get((route_name, current_direction))
-                if not route_import_key:
-                    log(
-                        "WARNING",
-                        "anei_route_mapping_missing",
-                        route_name=route_name,
-                        direction=current_direction,
-                        time=pending_time,
-                        symbol=line,
-                    )
-                    pending_time = None
-                    continue
-
-                candidates.append(
-                    CandidateStatus(
-                        operator="安栄観光",
-                        route_import_key=route_import_key,
-                        departure_hhmm=pending_time,
-                        status=status,
-                        source_url=ANEI_URL,
-                        route_label=route_name,
-                        direction_label=current_direction,
-                        symbol=line,
-                    )
+            route_import_key = ANEI_ROUTE_DIRECTION_TO_KEY.get((route_name, direction_label))
+            if not route_import_key:
+                log(
+                    "WARNING",
+                    "anei_route_mapping_missing",
+                    route_name=route_name,
+                    direction=direction_label,
                 )
-                pending_time = None
                 continue
 
-            # 同一行に「時刻 記号」などがある場合
-            times = TIME_RE.findall(line)
-            symbols = SYMBOL_RE.findall(line)
+            log(
+                "DEBUG",
+                "anei_direction_block_found",
+                route_name=route_name,
+                direction_label=direction_label,
+                route_import_key=route_import_key,
+                lines=direction_block[:80],
+            )
 
-            if len(times) == 1 and len(symbols) == 1:
-                hhmm = extract_time(times[0])
-                symbol = symbols[0]
-                status = classify_status_from_symbol(symbol)
+            pending_time: Optional[str] = None
 
-                if hhmm and status in {"cancelled", "pending"}:
-                    route_import_key = ANEI_ROUTE_DIRECTION_TO_KEY.get((route_name, current_direction))
-                    if route_import_key:
-                        candidates.append(
-                            CandidateStatus(
-                                operator="安栄観光",
-                                route_import_key=route_import_key,
-                                departure_hhmm=hhmm,
-                                status=status,
-                                source_url=ANEI_URL,
-                                route_label=route_name,
-                                direction_label=current_direction,
-                                symbol=symbol,
-                            )
-                        )
-                continue
+            for line in direction_block[1:]:
+                # 1) 単独時刻行
+                maybe_time = extract_time(line)
+                if maybe_time and line == maybe_time:
+                    pending_time = maybe_time
+                    continue
 
-            # テキストベースの保険判定
-            if pending_time:
-                status = classify_status_from_text(line)
-                if status in {"cancelled", "pending"}:
-                    route_import_key = ANEI_ROUTE_DIRECTION_TO_KEY.get((route_name, current_direction))
-                    if route_import_key:
+                # 2) 単独記号行
+                if line in STATUS_SYMBOL_MAP:
+                    if pending_time is None:
+                        continue
+
+                    status = classify_status_from_symbol(line)
+                    if status in {"cancelled", "pending"}:
                         candidates.append(
                             CandidateStatus(
                                 operator="安栄観光",
@@ -487,7 +459,51 @@ def parse_anei(html: str) -> Tuple[Optional[str], List[CandidateStatus]]:
                                 status=status,
                                 source_url=ANEI_URL,
                                 route_label=route_name,
-                                direction_label=current_direction,
+                                direction_label=direction_label,
+                                symbol=line,
+                            )
+                        )
+                    pending_time = None
+                    continue
+
+                # 3) 同一行に「時刻 + 記号」が1組ある場合
+                times = TIME_RE.findall(line)
+                symbols = SYMBOL_RE.findall(line)
+
+                if len(times) == 1 and len(symbols) == 1:
+                    hhmm = extract_time(times[0])
+                    symbol = symbols[0]
+                    status = classify_status_from_symbol(symbol)
+
+                    if hhmm and status in {"cancelled", "pending"}:
+                        candidates.append(
+                            CandidateStatus(
+                                operator="安栄観光",
+                                route_import_key=route_import_key,
+                                departure_hhmm=hhmm,
+                                status=status,
+                                source_url=ANEI_URL,
+                                route_label=route_name,
+                                direction_label=direction_label,
+                                symbol=symbol,
+                            )
+                        )
+                    pending_time = None
+                    continue
+
+                # 4) 保険: 直前に時刻があり、その次の行がテキスト説明の場合
+                if pending_time is not None:
+                    status = classify_status_from_text(line)
+                    if status in {"cancelled", "pending"}:
+                        candidates.append(
+                            CandidateStatus(
+                                operator="安栄観光",
+                                route_import_key=route_import_key,
+                                departure_hhmm=pending_time,
+                                status=status,
+                                source_url=ANEI_URL,
+                                route_label=route_name,
+                                direction_label=direction_label,
                                 symbol="text",
                             )
                         )
