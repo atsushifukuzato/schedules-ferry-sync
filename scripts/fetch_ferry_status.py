@@ -1,37 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-fetch_ferry_status.py
-
-目的:
-- 安栄観光 / 八重山観光フェリーの運航状況ページを解析
-- 「記号 + 時刻」単位で異常便のみ抽出
-- FerrySailing マスターCSVに存在する便のみ採用
-- Bubble Backend Workflow に送信
-- route_import_key + departure_hhmm の完全一致前提で送る
-- 誤った時刻は絶対送らない
-- 一致しない便は送らない
-- 複数異常便はすべて送る
-
-必須環境変数:
-- BUBBLE_WORKFLOW_URL
-任意:
-- BUBBLE_API_TOKEN
-- REQUEST_TIMEOUT
-- LOG_LEVEL
-
-想定入力CSV:
-- data/FerrySailing_COMPLETE_FINAL_with_conditions_corrected.csv
-
-想定CSV必須列:
-- operator
-- route_import_key
-- departure_hhmm
-
-※ operator の表記ゆれがある場合でも route_import_key + departure_hhmm を主キーとして扱う
-"""
-
 from __future__ import annotations
 
 import csv
@@ -39,14 +8,18 @@ import json
 import os
 import re
 import sys
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime
-from zoneinfo import ZoneInfo
 from typing import Dict, List, Optional, Tuple, Set
+from zoneinfo import ZoneInfo
 
 import requests
 from bs4 import BeautifulSoup
 
+
+# =========================================================
+# Settings
+# =========================================================
 
 JST = ZoneInfo("Asia/Tokyo")
 
@@ -61,29 +34,42 @@ FERRY_SAILING_CSV = os.getenv(
     "data/FerrySailing_COMPLETE_FINAL_with_conditions_corrected.csv",
 )
 
+FERRY_ROUTE_CSV = os.getenv(
+    "FERRY_ROUTE_CSV",
+    "data/FerryRoute_with_import_key.csv",
+)
+
 BUBBLE_WORKFLOW_URL = os.getenv("BUBBLE_WORKFLOW_URL", "").strip()
 BUBBLE_API_TOKEN = os.getenv("BUBBLE_API_TOKEN", "").strip()
 
+VERIFY_SSL = os.getenv("VERIFY_SSL", "true").lower() not in {"0", "false", "no"}
 
-# ----------------------------
+# 八重山観光フェリー側で SSL が不安定な場合だけ false を使う
+YKF_SSL_VERIFY = os.getenv("YKF_SSL_VERIFY", "true").lower() not in {"0", "false", "no"}
+
+
+# =========================================================
 # Logging
-# ----------------------------
+# =========================================================
 
 def log(level: str, message: str, **kwargs) -> None:
     levels = ["DEBUG", "INFO", "WARNING", "ERROR"]
+    if level not in levels:
+        level = "INFO"
     if levels.index(level) < levels.index(LOG_LEVEL):
         return
     payload = {"level": level, "message": message, **kwargs}
     print(json.dumps(payload, ensure_ascii=False), flush=True)
 
 
-# ----------------------------
+# =========================================================
 # Data models
-# ----------------------------
+# =========================================================
 
 @dataclass(frozen=True)
 class MasterSailing:
     operator: str
+    route_name: str
     route_import_key: str
     departure_hhmm: str
 
@@ -100,9 +86,14 @@ class CandidateStatus:
     symbol: str
 
 
-# ----------------------------
-# Constants / mappings
-# ----------------------------
+# =========================================================
+# Regex / utils
+# =========================================================
+
+TIME_RE = re.compile(r"(?<!\d)(\d{1,2}:\d{2})(?!\d)")
+DATE_RE = re.compile(r"(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})")
+WHITESPACE_RE = re.compile(r"\s+")
+SYMBOL_RE = re.compile(r"[◯〇△✕×―-]")
 
 STATUS_SYMBOL_MAP = {
     "◯": "normal",
@@ -114,7 +105,88 @@ STATUS_SYMBOL_MAP = {
     "-": "unknown",
 }
 
-# 安栄観光 航路名 + 発地/向き -> import_key
+
+def normalize_space(text: str) -> str:
+    return WHITESPACE_RE.sub(" ", (text or "")).strip()
+
+
+def normalize_lines(text: str) -> List[str]:
+    lines = []
+    for line in text.splitlines():
+        s = normalize_space(line)
+        if s:
+            lines.append(s)
+    return lines
+
+
+def extract_time(text: str) -> Optional[str]:
+    m = TIME_RE.search(text or "")
+    if not m:
+        return None
+    hhmm = m.group(1)
+    hh, mm = hhmm.split(":")
+    return f"{int(hh):02d}:{mm}"
+
+
+def extract_service_date(lines: List[str]) -> Optional[str]:
+    for line in lines[:80]:
+        m = DATE_RE.search(line)
+        if m:
+            y, mo, d = map(int, m.groups())
+            return f"{y:04d}-{mo:02d}-{d:02d}"
+    return None
+
+
+def requests_get(url: str, verify: bool = True) -> str:
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; ferry-status-bot/1.0)"
+    }
+    r = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT, verify=verify)
+    r.raise_for_status()
+    r.encoding = r.apparent_encoding or r.encoding
+    return r.text
+
+
+def soup_text(html: str) -> Tuple[BeautifulSoup, List[str]]:
+    soup = BeautifulSoup(html, "html.parser")
+    text = soup.get_text("\n")
+    return soup, normalize_lines(text)
+
+
+def detect_first_existing_field(fieldnames: List[str], candidates: List[str]) -> Optional[str]:
+    normalized = {f.strip(): f for f in fieldnames if f}
+    for c in candidates:
+        if c in normalized:
+            return normalized[c]
+    return None
+
+
+def classify_status_from_symbol(symbol: str) -> str:
+    return STATUS_SYMBOL_MAP.get(symbol, "unknown")
+
+
+def is_direction_label(line: str) -> bool:
+    return line in {
+        "石垣発", "波照間発", "上原発", "鳩間発", "大原発", "竹富発", "小浜発", "黒島発"
+    }
+
+
+def dedupe_candidates(candidates: List[CandidateStatus]) -> List[CandidateStatus]:
+    seen: Set[Tuple[str, str, str]] = set()
+    out: List[CandidateStatus] = []
+    for c in candidates:
+        key = (c.route_import_key, c.departure_hhmm, c.status)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(c)
+    return out
+
+
+# =========================================================
+# Route mappings from parsed page labels -> import_key
+# =========================================================
+
 ANEI_ROUTE_DIRECTION_TO_KEY: Dict[Tuple[str, str], str] = {
     ("波照間航路", "石垣発"): "anei-kanko__石垣→波照間",
     ("波照間航路", "波照間発"): "anei-kanko__波照間→石垣",
@@ -138,7 +210,6 @@ ANEI_ROUTE_DIRECTION_TO_KEY: Dict[Tuple[str, str], str] = {
     ("黒島航路", "黒島発"): "anei-kanko__黒島→石垣",
 }
 
-# 八重山観光フェリー 航路名 + 発地/向き -> import_key
 YKF_ROUTE_DIRECTION_TO_KEY: Dict[Tuple[str, str], str] = {
     ("竹富航路", "石垣発"): "yaeyama-kanko-ferry__石垣→竹富",
     ("竹富航路", "竹富発"): "yaeyama-kanko-ferry__竹富→石垣",
@@ -183,106 +254,165 @@ YKF_ROUTE_NAMES = [
 ]
 
 
-# ----------------------------
-# Utility
-# ----------------------------
+# =========================================================
+# CSV loading
+# =========================================================
 
-TIME_RE = re.compile(r"(?<!\d)(\d{1,2}:\d{2})(?!\d)")
-SYMBOL_RE = re.compile(r"^[◯〇△✕×―-]$")
-DATE_RE = re.compile(r"(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})")
-WHITESPACE_RE = re.compile(r"\s+")
-
-def normalize_space(text: str) -> str:
-    return WHITESPACE_RE.sub(" ", text).strip()
-
-def normalize_lines(text: str) -> List[str]:
-    lines = []
-    for line in text.splitlines():
-        s = normalize_space(line)
-        if s:
-            lines.append(s)
-    return lines
-
-def extract_time(text: str) -> Optional[str]:
-    m = TIME_RE.search(text)
-    if not m:
-        return None
-    hhmm = m.group(1)
-    hh, mm = hhmm.split(":")
-    return f"{int(hh):02d}:{mm}"
-
-def extract_service_date(lines: List[str]) -> str:
-    for line in lines[:50]:
-        m = DATE_RE.search(line)
-        if m:
-            y, mo, d = map(int, m.groups())
-            return f"{y:04d}-{mo:02d}-{d:02d}"
-    # 取れなければ実行日
-    now = datetime.now(JST)
-    return now.strftime("%Y-%m-%d")
-
-def requests_get(url: str) -> str:
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; ferry-status-bot/1.0)"
-    }
-    r = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
-    r.raise_for_status()
-    r.encoding = r.apparent_encoding or r.encoding
-    return r.text
-
-def soup_text(html: str) -> Tuple[BeautifulSoup, List[str]]:
-    soup = BeautifulSoup(html, "html.parser")
-    text = soup.get_text("\n")
-    return soup, normalize_lines(text)
-
-
-# ----------------------------
-# Master loading
-# ----------------------------
-
-def load_master(csv_path: str) -> Dict[Tuple[str, str], MasterSailing]:
+def load_route_import_keys(route_csv_path: str) -> Dict[str, str]:
     """
-    key = (route_import_key, departure_hhmm)
+    FerryRoute CSV から
+    route name -> import_key
+    を作る
+
+    ヘッダー名はある程度ゆらぎ対応:
+    - route name側: name / route / route_name / display_name
+    - import_key側: import_key / route_import_key
     """
-    master: Dict[Tuple[str, str], MasterSailing] = {}
-    with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
+    with open(route_csv_path, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
-        required = {"operator", "route_import_key", "departure_hhmm"}
-        missing = required - set(reader.fieldnames or [])
+        fieldnames = reader.fieldnames or []
+
+        log("INFO", "route_csv_headers_detected", headers=fieldnames, csv_path=route_csv_path)
+
+        route_name_field = detect_first_existing_field(
+            fieldnames, ["name", "route", "route_name", "display_name"]
+        )
+        import_key_field = detect_first_existing_field(
+            fieldnames, ["import_key", "route_import_key"]
+        )
+
+        missing = []
+        if not route_name_field:
+            missing.append("name|route|route_name|display_name")
+        if not import_key_field:
+            missing.append("import_key|route_import_key")
         if missing:
-            raise ValueError(f"Missing required CSV columns: {sorted(missing)}")
+            raise ValueError(f"Missing required FerryRoute CSV columns: {missing}")
+
+        mapping: Dict[str, str] = {}
+        duplicates: List[str] = []
 
         for row in reader:
-            operator = normalize_space(row.get("operator", ""))
-            route_import_key = normalize_space(row.get("route_import_key", ""))
-            departure_hhmm = normalize_space(row.get("departure_hhmm", ""))
+            route_name = normalize_space(row.get(route_name_field, ""))
+            import_key = normalize_space(row.get(import_key_field, ""))
 
-            if not route_import_key or not departure_hhmm:
+            if not route_name or not import_key:
                 continue
 
-            time_norm = extract_time(departure_hhmm)
-            if not time_norm:
+            if route_name in mapping and mapping[route_name] != import_key:
+                duplicates.append(route_name)
+
+            mapping[route_name] = import_key
+
+        log(
+            "INFO",
+            "route_import_keys_loaded",
+            csv_path=route_csv_path,
+            total=len(mapping),
+            duplicate_route_names=duplicates,
+        )
+        return mapping
+
+
+def load_master(
+    sailing_csv_path: str,
+    route_name_to_import_key: Dict[str, str],
+) -> Dict[Tuple[str, str], MasterSailing]:
+    """
+    FerrySailing CSV から master を作る
+
+    想定:
+    - sailing CSV には route_import_key は無くてもよい
+    - route 列を使って FerryRoute CSV から import_key を引く
+    - 最終キーは (route_import_key, departure_hhmm)
+
+    ヘッダーゆらぎ対応:
+    - operator: operator
+    - route: route / route_name / ferry_route
+    - departure_hhmm: departure_hhmm / departure / departure_time
+    """
+    with open(sailing_csv_path, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames or []
+
+        log("INFO", "sailing_csv_headers_detected", headers=fieldnames, csv_path=sailing_csv_path)
+
+        operator_field = detect_first_existing_field(fieldnames, ["operator"])
+        route_field = detect_first_existing_field(fieldnames, ["route", "route_name", "ferry_route"])
+        departure_field = detect_first_existing_field(
+            fieldnames, ["departure_hhmm", "departure", "departure_time"]
+        )
+
+        missing = []
+        if not operator_field:
+            missing.append("operator")
+        if not route_field:
+            missing.append("route|route_name|ferry_route")
+        if not departure_field:
+            missing.append("departure_hhmm|departure|departure_time")
+        if missing:
+            raise ValueError(f"Missing required FerrySailing CSV columns: {missing}")
+
+        master: Dict[Tuple[str, str], MasterSailing] = {}
+        unresolved_routes: List[str] = []
+        skipped_departures: List[Dict[str, str]] = []
+
+        for row in reader:
+            operator = normalize_space(row.get(operator_field, ""))
+            route_name = normalize_space(row.get(route_field, ""))
+            departure_raw = normalize_space(row.get(departure_field, ""))
+
+            if not route_name or not departure_raw:
                 continue
 
-            key = (route_import_key, time_norm)
+            route_import_key = route_name_to_import_key.get(route_name)
+            if not route_import_key:
+                unresolved_routes.append(route_name)
+                log(
+                    "WARNING",
+                    "route_import_key_not_found_from_route_csv",
+                    route_name=route_name,
+                    departure_raw=departure_raw,
+                )
+                continue
+
+            departure_hhmm = extract_time(departure_raw)
+            if not departure_hhmm:
+                skipped_departures.append(
+                    {"route_name": route_name, "departure_raw": departure_raw}
+                )
+                log(
+                    "WARNING",
+                    "departure_time_parse_failed",
+                    route_name=route_name,
+                    departure_raw=departure_raw,
+                )
+                continue
+
+            key = (route_import_key, departure_hhmm)
             master[key] = MasterSailing(
                 operator=operator,
+                route_name=route_name,
                 route_import_key=route_import_key,
-                departure_hhmm=time_norm,
+                departure_hhmm=departure_hhmm,
             )
 
-    log("INFO", "master_loaded", csv_path=csv_path, total=len(master))
-    return master
+        log(
+            "INFO",
+            "master_loaded",
+            csv_path=sailing_csv_path,
+            total=len(master),
+            unresolved_route_names=sorted(set(unresolved_routes)),
+            skipped_departures=skipped_departures[:20],
+        )
+        return master
 
 
-# ----------------------------
-# Section split helpers
-# ----------------------------
+# =========================================================
+# Section helpers
+# =========================================================
 
 def split_sections(lines: List[str], route_names: List[str]) -> Dict[str, List[str]]:
-    """
-    ルート見出しごとのテキストブロックを切り出す
-    """
     idxs = []
     route_set = set(route_names)
 
@@ -293,31 +423,24 @@ def split_sections(lines: List[str], route_names: List[str]) -> Dict[str, List[s
     sections: Dict[str, List[str]] = {}
     for n, (start_idx, route_name) in enumerate(idxs):
         end_idx = idxs[n + 1][0] if n + 1 < len(idxs) else len(lines)
-        chunk = lines[start_idx:end_idx]
-        sections[route_name] = chunk
+        sections[route_name] = lines[start_idx:end_idx]
 
     return sections
 
-def is_direction_label(line: str) -> bool:
-    return line in {"石垣発", "波照間発", "上原発", "鳩間発", "大原発", "竹富発", "小浜発", "黒島発"}
 
-def classify_status_from_symbol(symbol: str) -> str:
-    return STATUS_SYMBOL_MAP.get(symbol, "unknown")
-
-
-# ----------------------------
+# =========================================================
 # Parser: 安栄観光
-# ----------------------------
+# =========================================================
 
-def parse_anei(html: str) -> Tuple[str, List[CandidateStatus]]:
+def parse_anei(html: str) -> Tuple[Optional[str], List[CandidateStatus]]:
     _, lines = soup_text(html)
-    service_date = extract_service_date(lines)
+    page_service_date = extract_service_date(lines)
     sections = split_sections(lines, ANEI_ROUTE_NAMES)
 
     candidates: List[CandidateStatus] = []
 
     for route_name, chunk in sections.items():
-        log("DEBUG", "anei_route_section_found", route_name=route_name, lines=chunk[:80])
+        log("DEBUG", "anei_route_section_found", route_name=route_name, lines=chunk[:120])
 
         current_direction: Optional[str] = None
         pending_time: Optional[str] = None
@@ -331,20 +454,19 @@ def parse_anei(html: str) -> Tuple[str, List[CandidateStatus]]:
             if current_direction is None:
                 continue
 
-            # 時刻抽出
-            t = extract_time(line)
-            if t is not None:
-                pending_time = t
+            # 単独時刻行
+            maybe_time = extract_time(line)
+            if maybe_time and line == maybe_time:
+                pending_time = maybe_time
                 continue
 
-            # 記号抽出
-            if SYMBOL_RE.match(line):
+            # 単独記号行
+            if line in STATUS_SYMBOL_MAP:
                 if pending_time is None:
                     continue
 
                 symbol = line
                 status = classify_status_from_symbol(symbol)
-
                 if status == "normal":
                     pending_time = None
                     continue
@@ -362,20 +484,52 @@ def parse_anei(html: str) -> Tuple[str, List[CandidateStatus]]:
                     pending_time = None
                     continue
 
-                candidate = CandidateStatus(
-                    operator="安栄観光",
-                    route_import_key=route_import_key,
-                    departure_hhmm=pending_time,
-                    status=status,
-                    source_url=ANEI_URL,
-                    route_label=route_name,
-                    direction_label=current_direction,
-                    symbol=symbol,
+                candidates.append(
+                    CandidateStatus(
+                        operator="安栄観光",
+                        route_import_key=route_import_key,
+                        departure_hhmm=pending_time,
+                        status=status,
+                        source_url=ANEI_URL,
+                        route_label=route_name,
+                        direction_label=current_direction,
+                        symbol=symbol,
+                    )
                 )
-                candidates.append(candidate)
                 pending_time = None
+                continue
 
-    log("INFO", "anei_candidates_parsed", service_date=service_date, count=len(candidates))
+            # 同一行に「時刻 記号」がある場合も保険で対応
+            all_times = TIME_RE.findall(line)
+            all_symbols = SYMBOL_RE.findall(line)
+            if len(all_times) == 1 and len(all_symbols) == 1:
+                hhmm = extract_time(all_times[0])
+                symbol = all_symbols[0]
+                status = classify_status_from_symbol(symbol)
+                if hhmm and status != "normal":
+                    route_import_key = ANEI_ROUTE_DIRECTION_TO_KEY.get((route_name, current_direction))
+                    if route_import_key:
+                        candidates.append(
+                            CandidateStatus(
+                                operator="安栄観光",
+                                route_import_key=route_import_key,
+                                departure_hhmm=hhmm,
+                                status=status,
+                                source_url=ANEI_URL,
+                                route_label=route_name,
+                                direction_label=current_direction,
+                                symbol=symbol,
+                            )
+                        )
+
+    candidates = dedupe_candidates(candidates)
+
+    log(
+        "INFO",
+        "anei_candidates_parsed",
+        page_service_date=page_service_date,
+        count=len(candidates),
+    )
     for c in candidates:
         log(
             "INFO",
@@ -388,56 +542,52 @@ def parse_anei(html: str) -> Tuple[str, List[CandidateStatus]]:
             direction_label=c.direction_label,
         )
 
-    return service_date, dedupe_candidates(candidates)
+    return page_service_date, candidates
 
 
-# ----------------------------
+# =========================================================
 # Parser: 八重山観光フェリー
-# ----------------------------
+# =========================================================
 
-def parse_ykf(html: str) -> Tuple[str, List[CandidateStatus]]:
+def parse_ykf(html: str) -> Tuple[Optional[str], List[CandidateStatus]]:
     _, lines = soup_text(html)
-    service_date = extract_service_date(lines)
+    page_service_date = extract_service_date(lines)
     sections = split_sections(lines, YKF_ROUTE_NAMES)
 
     candidates: List[CandidateStatus] = []
 
     for route_name, chunk in sections.items():
-        log("DEBUG", "ykf_route_section_found", route_name=route_name, lines=chunk[:80])
+        log("DEBUG", "ykf_route_section_found", route_name=route_name, lines=chunk[:120])
 
-        # 方向ラベルは通常2つ出る
-        direction_labels: List[str] = [line for line in chunk if is_direction_label(line)]
+        direction_labels = [line for line in chunk if is_direction_label(line)]
         if not direction_labels:
             log("WARNING", "ykf_direction_labels_missing", route_name=route_name)
             continue
 
-        # 例:
-        # 石垣発 上原発
-        # × 08:00 × 09:00
-        # × 11:00 × 12:00
-        # ...
-        # → 各行から [記号, 時刻, 記号, 時刻] を読む
         primary = direction_labels[0]
         secondary = direction_labels[1] if len(direction_labels) >= 2 else None
 
         for line in chunk:
-            symbols = re.findall(r"[◯〇△✕×―-]", line)
+            symbols = SYMBOL_RE.findall(line)
             times = TIME_RE.findall(line)
 
             if not symbols or not times:
                 continue
 
-            # 行によって 〇 07:30 〇 07:50 のような2本建て
-            # または 〇 07:30 だけの可能性もある
-            parsed_pairs: List[Tuple[str, str, str]] = []
+            # 典型: "× 08:00 × 09:00"
+            pairs: List[Tuple[str, str, str]] = []
 
             if len(symbols) >= 1 and len(times) >= 1 and primary:
-                parsed_pairs.append((primary, extract_time(times[0]) or times[0], symbols[0]))
+                hhmm = extract_time(times[0])
+                if hhmm:
+                    pairs.append((primary, hhmm, symbols[0]))
 
             if len(symbols) >= 2 and len(times) >= 2 and secondary:
-                parsed_pairs.append((secondary, extract_time(times[1]) or times[1], symbols[1]))
+                hhmm = extract_time(times[1])
+                if hhmm:
+                    pairs.append((secondary, hhmm, symbols[1]))
 
-            for direction_label, hhmm, symbol in parsed_pairs:
+            for direction_label, hhmm, symbol in pairs:
                 status = classify_status_from_symbol(symbol)
                 if status == "normal":
                     continue
@@ -454,19 +604,27 @@ def parse_ykf(html: str) -> Tuple[str, List[CandidateStatus]]:
                     )
                     continue
 
-                candidate = CandidateStatus(
-                    operator="八重山観光フェリー",
-                    route_import_key=route_import_key,
-                    departure_hhmm=hhmm,
-                    status=status,
-                    source_url=YKF_URL,
-                    route_label=route_name,
-                    direction_label=direction_label,
-                    symbol=symbol,
+                candidates.append(
+                    CandidateStatus(
+                        operator="八重山観光フェリー",
+                        route_import_key=route_import_key,
+                        departure_hhmm=hhmm,
+                        status=status,
+                        source_url=YKF_URL,
+                        route_label=route_name,
+                        direction_label=direction_label,
+                        symbol=symbol,
+                    )
                 )
-                candidates.append(candidate)
 
-    log("INFO", "ykf_candidates_parsed", service_date=service_date, count=len(candidates))
+    candidates = dedupe_candidates(candidates)
+
+    log(
+        "INFO",
+        "ykf_candidates_parsed",
+        page_service_date=page_service_date,
+        count=len(candidates),
+    )
     for c in candidates:
         log(
             "INFO",
@@ -479,23 +637,12 @@ def parse_ykf(html: str) -> Tuple[str, List[CandidateStatus]]:
             direction_label=c.direction_label,
         )
 
-    return service_date, dedupe_candidates(candidates)
+    return page_service_date, candidates
 
 
-# ----------------------------
-# Candidate validation
-# ----------------------------
-
-def dedupe_candidates(candidates: List[CandidateStatus]) -> List[CandidateStatus]:
-    seen: Set[Tuple[str, str, str]] = set()
-    out: List[CandidateStatus] = []
-    for c in candidates:
-        key = (c.route_import_key, c.departure_hhmm, c.status)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(c)
-    return out
+# =========================================================
+# Master resolution
+# =========================================================
 
 def filter_candidates_by_master(
     candidates: List[CandidateStatus],
@@ -514,9 +661,9 @@ def filter_candidates_by_master(
     return resolved, rejected
 
 
-# ----------------------------
+# =========================================================
 # Bubble sending
-# ----------------------------
+# =========================================================
 
 def send_to_bubble(candidate: CandidateStatus, checked_at_iso: str, service_date: str) -> bool:
     if not BUBBLE_WORKFLOW_URL:
@@ -545,6 +692,7 @@ def send_to_bubble(candidate: CandidateStatus, checked_at_iso: str, service_date
         headers=headers,
         json=payload,
         timeout=REQUEST_TIMEOUT,
+        verify=VERIFY_SSL,
     )
 
     ok = 200 <= r.status_code < 300
@@ -560,14 +708,16 @@ def send_to_bubble(candidate: CandidateStatus, checked_at_iso: str, service_date
     return ok
 
 
-# ----------------------------
+# =========================================================
 # Main
-# ----------------------------
+# =========================================================
 
 def main() -> int:
     checked_at = datetime.now(JST)
     checked_at_iso = checked_at.isoformat()
-    execution_service_date = checked_at.strftime("%Y-%m-%d")  # 要件: 実行日を使う
+
+    # 重要: service_date は「実行日」を使う
+    execution_service_date = checked_at.strftime("%Y-%m-%d")
 
     log(
         "INFO",
@@ -575,20 +725,22 @@ def main() -> int:
         checked_at=checked_at_iso,
         service_date=execution_service_date,
         ferry_sailing_csv=FERRY_SAILING_CSV,
+        ferry_route_csv=FERRY_ROUTE_CSV,
+        ykf_ssl_verify=YKF_SSL_VERIFY,
     )
 
     try:
-        master = load_master(FERRY_SAILING_CSV)
+        route_name_to_import_key = load_route_import_keys(FERRY_ROUTE_CSV)
+        master = load_master(FERRY_SAILING_CSV, route_name_to_import_key)
 
-        # Fetch pages
-        anei_html = requests_get(ANEI_URL)
-        ykf_html = requests_get(YKF_URL)
+        anei_html = requests_get(ANEI_URL, verify=VERIFY_SSL)
+        ykf_html = requests_get(YKF_URL, verify=YKF_SSL_VERIFY)
 
-        # Parse
         anei_page_date, anei_candidates = parse_anei(anei_html)
         ykf_page_date, ykf_candidates = parse_ykf(ykf_html)
 
         all_candidates = anei_candidates + ykf_candidates
+
         log(
             "INFO",
             "abnormal_candidates_parsed",
@@ -598,8 +750,8 @@ def main() -> int:
             total=len(all_candidates),
         )
 
-        # Master resolution
         resolved, rejected = filter_candidates_by_master(all_candidates, master)
+
         log(
             "INFO",
             "master_resolution_summary",
@@ -620,9 +772,9 @@ def main() -> int:
                 source_url=c.source_url,
             )
 
-        # Send
         sent = 0
         failed = 0
+
         for c in resolved:
             try:
                 ok = send_to_bubble(
@@ -655,6 +807,7 @@ def main() -> int:
             failed=failed,
             service_date=execution_service_date,
         )
+
         return 0 if failed == 0 else 1
 
     except Exception as e:
