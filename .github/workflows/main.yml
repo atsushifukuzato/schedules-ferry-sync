@@ -4,14 +4,14 @@ on:
   workflow_dispatch:
 
   schedule:
-    # 朝の運航状況
+    # ===== 朝の運行状況 (05:20〜07:00 JST) =====
     - cron: '20 20 * * *'  # 05:20 JST
     - cron: '40 20 * * *'  # 05:40 JST
     - cron: '0 21 * * *'   # 06:00 JST
     - cron: '20 21 * * *'  # 06:20 JST
     - cron: '40 21 * * *'  # 06:40 JST
 
-    # 波照間などの追加確認
+    # ===== 波照間など追加確認 =====
     - cron: '50 1 * * *'   # 10:50 JST
     - cron: '10 2 * * *'   # 11:10 JST
     - cron: '30 2 * * *'   # 11:30 JST
@@ -28,18 +28,40 @@ jobs:
 
     env:
       BUBBLE_BASE_URL: https://schedules.jp/api/1.1/wf
+      WF_NAME: receive_ferry_status
+
       FERRY_SAILING_CSV: data/FerrySailing_COMPLETE_FINAL_with_conditions_corrected.csv
       FERRY_ROUTE_CSV: data/FerryRoute_with_import_key.csv
-      WF_NAME: receive_ferry_status
+
       FERRY_SECRET: ${{ secrets.FERRY_SECRET }}
 
-      # 必要になったらここに追加
-      # 例: "未定,調整中,条件付,条件付き,一部欠航,運航可否確認中,見合わせ,一部運休,変更"
-      FERRY_PENDING_KEYWORDS: ""
+      # pending 判定（必要に応じて追加）
+      FERRY_PENDING_KEYWORDS: "未定,調整中,条件付,条件付き,一部欠航,運航可否確認中,見合わせ,一部運休,変更"
+
+      REQUEST_RETRIES: "3"
+      REQUEST_DELAY_SEC: "3"
+      YKF_SSL_VERIFY: "false"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Debug files
+        run: |
+          echo "===== CURRENT DIR ====="
+          pwd
+          echo "===== ROOT ====="
+          ls -la
+          echo "===== DATA ====="
+          ls -la data || true
+          echo "===== ENV ====="
+          echo "FERRY_SAILING_CSV=$FERRY_SAILING_CSV"
+          echo "FERRY_ROUTE_CSV=$FERRY_ROUTE_CSV"
+
+      - name: Check files
+        run: |
+          test -f "$FERRY_SAILING_CSV"
+          test -f "$FERRY_ROUTE_CSV"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -49,12 +71,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests beautifulsoup4
-
-      - name: Check files
-        run: |
-          test -f "$FERRY_SAILING_CSV"
-          test -f "$FERRY_ROUTE_CSV"
+          pip install requests beautifulsoup4 urllib3
 
       - name: Run ferry sync
         run: python scripts/fetch_ferry_status.py
