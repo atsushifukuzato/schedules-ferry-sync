@@ -186,12 +186,8 @@ def build_status_map_for_today() -> Dict[Tuple[str, str], Tuple[str, str]]:
 
     status_map: Dict[Tuple[str, str], Tuple[str, str]] = {}
 
-    # 安栄観光はページ全体の判定を、そのまま安栄便すべてに適用
-    # route_import_key は CSV 側から受け取るので、ここでは operator 単位のデフォルトとして扱う
-    # 実際の送信時に operator=安栄観光 の便はすべて anei_status を使う
     status_map[("安栄観光", "__DEFAULT__")] = (anei_status, ANEI_URL)
 
-    # 八重山観光フェリーは route ごと
     for route_import_key, status in ykf_route_statuses.items():
         status_map[("八重山観光フェリー", route_import_key)] = (status, YKF_URL)
 
@@ -199,9 +195,10 @@ def build_status_map_for_today() -> Dict[Tuple[str, str], Tuple[str, str]]:
 
 
 class BubbleWorkflowClient:
-    def __init__(self, base_url: str, workflow_name: str):
+    def __init__(self, base_url: str, workflow_name: str, secret: str):
         self.base_url = base_url.rstrip("/")
         self.workflow_name = workflow_name
+        self.secret = secret
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -221,6 +218,7 @@ class BubbleWorkflowClient:
     ) -> None:
         url = f"{self.base_url}/{self.workflow_name}"
         payload = {
+            "secret": self.secret,
             "operator": operator,
             "status": status,
             "checked_at": checked_at_iso,
@@ -237,6 +235,7 @@ def main() -> int:
     try:
         bubble_base_url = env_required("BUBBLE_BASE_URL")
         ferry_sailing_csv = env_required("FERRY_SAILING_CSV")
+        ferry_secret = env_required("FERRY_SECRET")
         workflow_name = os.getenv("WF_NAME", "receive_ferry_status").strip()
 
         now = now_jst()
@@ -259,6 +258,7 @@ def main() -> int:
         bubble = BubbleWorkflowClient(
             base_url=bubble_base_url,
             workflow_name=workflow_name,
+            secret=ferry_secret,
         )
 
         sent = 0
