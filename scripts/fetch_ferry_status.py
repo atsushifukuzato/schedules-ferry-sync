@@ -26,11 +26,7 @@ DEFAULT_TIMEOUT = 30
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# cancelled は強めの確定語だけ固定
 CANCELLED_KEYWORDS = ["欠航", "全便欠航", "運航停止", "中止"]
-
-# pending は GitHub Actions 側 env で調整する想定
-# 例: FERRY_PENDING_KEYWORDS="未定,調整中,条件付,条件付き,一部欠航,運航可否確認中,見合わせ,一部運休,変更"
 PENDING_KEYWORDS = [
     x.strip() for x in os.getenv("FERRY_PENDING_KEYWORDS", "").split(",") if x.strip()
 ]
@@ -39,11 +35,35 @@ TIME_RE = re.compile(r"^\d{1,2}:\d{2}$")
 
 
 @dataclass(frozen=True)
+class OperatorConfig:
+    key: str
+    bubble_operator_name_en: str
+    source_url: str
+    csv_operator_aliases: Tuple[str, ...]
+
+
+OPERATORS: Dict[str, OperatorConfig] = {
+    "anei": OperatorConfig(
+        key="anei",
+        bubble_operator_name_en="Anei Kanko",
+        source_url=ANEI_URL,
+        csv_operator_aliases=("安栄観光", "Anei Kanko"),
+    ),
+    "ykf": OperatorConfig(
+        key="ykf",
+        bubble_operator_name_en="Yaeyama Kanko Ferry",
+        source_url=YKF_URL,
+        csv_operator_aliases=("八重山観光フェリー", "Yaeyama Kanko Ferry"),
+    ),
+}
+
+
+@dataclass(frozen=True)
 class AbnormalCandidate:
-    operator: str
+    operator_key: str
     section_label: str
     departure_label: str
-    departure_hhmm: str
+    departure_hhmm_raw: str
     status: str
     raw_status_text: str
     source_url: str
@@ -51,9 +71,9 @@ class AbnormalCandidate:
 
 @dataclass(frozen=True)
 class AbnormalSailing:
-    operator: str
+    operator_bubble_name_en: str
     route_import_key: str
-    departure_hhmm: str
+    departure_hhmm: str  # CSV の正規値
     status: str
     source_url: str
     raw_status_text: str
@@ -138,6 +158,17 @@ def normalize_text(text: str) -> str:
     return text
 
 
+def normalize_hhmm_for_match(text: str) -> str:
+    t = normalize_text(text)
+    t = t.replace("：", ":")
+    m = re.match(r"^(\d{1,2}):(\d{2})$", t)
+    if not m:
+        return t
+    hour = int(m.group(1))
+    minute = m.group(2)
+    return f"{hour}:{minute}"
+
+
 def build_session() -> requests.Session:
     session = requests.Session()
     session.headers.update(
@@ -180,17 +211,12 @@ def get_with_retry(
     raise RuntimeError(f"取得失敗: {url} / {last_error}")
 
 
-def load_sailings(csv_path: str) -> set[Tuple[str, str, str]]:
-    result: set[Tuple[str, str, str]] = set()
-    with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            operator = normalize_text(row.get("operator", ""))
-            route_import_key = normalize_text(row.get("route", ""))
-            departure_hhmm = normalize_text(row.get("departure_hhmm", ""))
-            if operator and route_import_key and departure_hhmm:
-                result.add((operator, route_import_key, departure_hhmm))
-    return result
+def csv_operator_to_key(operator_value: str) -> Optional[str]:
+    value = normalize_text(operator_value)
+    for key, cfg in OPERATORS.items():
+        if value in cfg.csv_operator_aliases:
+            return key
+    return None
 
 
 def port_to_departure_label(port_name: str) -> Optional[str]:
@@ -209,7 +235,7 @@ def port_to_departure_label(port_name: str) -> Optional[str]:
 
 def build_route_lookup(route_csv_path: str) -> Dict[Tuple[str, str, str], str]:
     """
-    key: (operator, section_label, departure_label)
+    key: (operator_key, section_label, departure_label)
     value: route_import_key
     """
     lookup: Dict[Tuple[str, str, str], str] = {}
@@ -231,7 +257,6 @@ def build_route_lookup(route_csv_path: str) -> Dict[Tuple[str, str, str], str]:
         "波照間→石垣": "波照間航路",
         "西表上原→鳩間": "上原-鳩間航路",
         "鳩間→西表上原": "上原-鳩間航路",
-        # 八重山観光フェリーページ表記対策
         "石垣→西表大原": "西表大原航路",
         "西表大原→石垣": "西表大原航路",
         "石垣→西表上原": "西表上原航路",
@@ -241,7 +266,7 @@ def build_route_lookup(route_csv_path: str) -> Dict[Tuple[str, str, str], str]:
     with open(route_csv_path, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            operator = normalize_text(row.get("operator", ""))
+            operator_key = csv_operator_to_key(row.get("operator", ""))
             import_key = normalize_text(row.get("import_key", ""))
             route_name = normalize_text(row.get("route_name", ""))
             from_port = normalize_text(row.get("from_port", ""))
@@ -249,14 +274,41 @@ def build_route_lookup(route_csv_path: str) -> Dict[Tuple[str, str, str], str]:
             section_label = direct_section_label_map.get(route_name)
             departure_label = port_to_departure_label(from_port)
 
-            if not operator or not import_key or not section_label or not departure_label:
+            if not operator_key or not import_key or not section_label or not departure_label:
                 continue
 
-            # 安栄の inter-island は current page から一意に取りづらいため対象外継続
-            if operator == "安栄観光" and section_label == "上原-鳩間航路":
+            # 安栄の inter-island は current page から一意に取りづらいため対象外
+            if operator_key == "anei" and section_label == "上原-鳩間航路":
                 continue
 
-            lookup[(operator, section_label, departure_label)] = import_key
+            lookup[(operator_key, section_label, departure_label)] = import_key
+
+    return lookup
+
+
+def build_canonical_sailing_lookup(
+    sailing_csv_path: str,
+) -> Dict[Tuple[str, str, str], str]:
+    """
+    key: (operator_key, route_import_key, normalized_hhmm_for_match)
+    value: canonical departure_hhmm from CSV
+    """
+    lookup: Dict[Tuple[str, str, str], str] = {}
+
+    with open(sailing_csv_path, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            operator_key = csv_operator_to_key(row.get("operator", ""))
+            route_import_key = normalize_text(row.get("route", ""))
+            departure_hhmm_raw = normalize_text(row.get("departure_hhmm", ""))
+
+            if not operator_key or not route_import_key or not departure_hhmm_raw:
+                continue
+
+            canonical = departure_hhmm_raw.replace("：", ":")
+            match_key = normalize_hhmm_for_match(canonical)
+
+            lookup[(operator_key, route_import_key, match_key)] = canonical
 
     return lookup
 
@@ -303,7 +355,7 @@ def find_section_ranges(lines: List[str], section_labels: List[str]) -> List[Tup
 
 
 def parse_anei_abnormal_candidates(html: str) -> List[AbnormalCandidate]:
-    operator = "安栄観光"
+    operator_key = "anei"
     section_labels = ["波照間航路", "上原航路", "鳩間航路", "大原航路", "竹富航路", "小浜航路", "黒島航路"]
     lines = extract_lines(html)
     ranges = find_section_ranges(lines, section_labels)
@@ -325,7 +377,7 @@ def parse_anei_abnormal_candidates(html: str) -> List[AbnormalCandidate]:
                 continue
 
             if TIME_RE.match(line) and current_departure_label:
-                departure_hhmm = line
+                departure_hhmm_raw = line
                 nearby_lines = block[i + 1:i + 4]
                 raw_status_text = " ".join(nearby_lines)
                 status = classify_status_from_symbol_or_text(raw_status_text)
@@ -333,10 +385,10 @@ def parse_anei_abnormal_candidates(html: str) -> List[AbnormalCandidate]:
                 if status:
                     result.append(
                         AbnormalCandidate(
-                            operator=operator,
+                            operator_key=operator_key,
                             section_label=section_label,
                             departure_label=current_departure_label,
-                            departure_hhmm=departure_hhmm,
+                            departure_hhmm_raw=departure_hhmm_raw,
                             status=status,
                             raw_status_text=raw_status_text,
                             source_url=ANEI_URL,
@@ -351,13 +403,12 @@ def parse_anei_abnormal_candidates(html: str) -> List[AbnormalCandidate]:
 
 
 def parse_ykf_abnormal_candidates(html: str, service_date: date) -> List[AbnormalCandidate]:
-    operator = "八重山観光フェリー"
+    operator_key = "ykf"
     section_labels = ["竹富航路", "小浜航路", "黒島航路", "西表大原航路", "西表上原航路", "鳩間航路", "上原-鳩間航路"]
     lines = extract_lines(html)
     ranges = find_section_ranges(lines, section_labels)
 
-    # YKF はページ上の日付が固定のため、取得日基準にする
-    _ = service_date
+    _ = service_date  # 取得日基準で動かすが、ここでは時刻抽出にのみ利用
 
     result: List[AbnormalCandidate] = []
     dep_label_pattern = re.compile(r"(\S+発)")
@@ -376,7 +427,7 @@ def parse_ykf_abnormal_candidates(html: str, service_date: date) -> List[Abnorma
         if not departure_labels:
             Logger.warning(
                 "ykf_departure_labels_not_found",
-                operator=operator,
+                operator_key=operator_key,
                 section_label=section_label,
             )
             continue
@@ -386,11 +437,11 @@ def parse_ykf_abnormal_candidates(html: str, service_date: date) -> List[Abnorma
             if not pairs:
                 continue
 
-            for idx, (symbol, departure_hhmm) in enumerate(pairs):
+            for idx, (symbol, departure_hhmm_raw) in enumerate(pairs):
                 if idx >= len(departure_labels):
                     Logger.warning(
                         "ykf_label_pair_mismatch",
-                        operator=operator,
+                        operator_key=operator_key,
                         section_label=section_label,
                         line=line,
                         departure_labels=departure_labels,
@@ -405,10 +456,10 @@ def parse_ykf_abnormal_candidates(html: str, service_date: date) -> List[Abnorma
                 departure_label = departure_labels[idx]
                 result.append(
                     AbnormalCandidate(
-                        operator=operator,
+                        operator_key=operator_key,
                         section_label=section_label,
                         departure_label=departure_label,
-                        departure_hhmm=departure_hhmm,
+                        departure_hhmm_raw=departure_hhmm_raw,
                         status=status,
                         raw_status_text=line,
                         source_url=YKF_URL,
@@ -421,36 +472,40 @@ def parse_ykf_abnormal_candidates(html: str, service_date: date) -> List[Abnorma
 def resolve_candidates(
     candidates: List[AbnormalCandidate],
     route_lookup: Dict[Tuple[str, str, str], str],
-    existing_sailings: set[Tuple[str, str, str]],
+    canonical_sailing_lookup: Dict[Tuple[str, str, str], str],
 ) -> Tuple[List[AbnormalSailing], List[AbnormalCandidate]]:
     resolved: List[AbnormalSailing] = []
     unresolved: List[AbnormalCandidate] = []
 
     for item in candidates:
-        route_import_key = route_lookup.get((item.operator, item.section_label, item.departure_label))
+        route_import_key = route_lookup.get((item.operator_key, item.section_label, item.departure_label))
         if not route_import_key:
             unresolved.append(item)
             Logger.warning(
                 "route_lookup_not_found",
-                operator=item.operator,
+                operator_key=item.operator_key,
                 section_label=item.section_label,
                 departure_label=item.departure_label,
-                departure_hhmm=item.departure_hhmm,
+                departure_hhmm_raw=item.departure_hhmm_raw,
                 status=item.status,
                 raw_status_text=item.raw_status_text,
             )
             continue
 
-        key = (item.operator, route_import_key, item.departure_hhmm)
-        if key not in existing_sailings:
+        departure_match_key = normalize_hhmm_for_match(item.departure_hhmm_raw)
+        canonical_departure_hhmm = canonical_sailing_lookup.get(
+            (item.operator_key, route_import_key, departure_match_key)
+        )
+        if not canonical_departure_hhmm:
             unresolved.append(item)
             Logger.warning(
-                "sailing_master_not_found",
-                operator=item.operator,
+                "canonical_sailing_not_found",
+                operator_key=item.operator_key,
                 route_import_key=route_import_key,
-                departure_hhmm=item.departure_hhmm,
                 section_label=item.section_label,
                 departure_label=item.departure_label,
+                departure_hhmm_raw=item.departure_hhmm_raw,
+                departure_match_key=departure_match_key,
                 status=item.status,
                 raw_status_text=item.raw_status_text,
             )
@@ -458,9 +513,9 @@ def resolve_candidates(
 
         resolved.append(
             AbnormalSailing(
-                operator=item.operator,
+                operator_bubble_name_en=OPERATORS[item.operator_key].bubble_operator_name_en,
                 route_import_key=route_import_key,
-                departure_hhmm=item.departure_hhmm,
+                departure_hhmm=canonical_departure_hhmm,
                 status=item.status,
                 source_url=item.source_url,
                 raw_status_text=item.raw_status_text,
@@ -475,7 +530,7 @@ def resolve_candidates(
 def dedupe_resolved(items: List[AbnormalSailing]) -> List[AbnormalSailing]:
     dedup: Dict[Tuple[str, str, str], AbnormalSailing] = {}
     for item in items:
-        key = (item.operator, item.route_import_key, item.departure_hhmm)
+        key = (item.operator_bubble_name_en, item.route_import_key, item.departure_hhmm)
         dedup[key] = item
     return list(dedup.values())
 
@@ -533,13 +588,13 @@ def main() -> int:
             request_delay_sec=config.request_delay_sec,
         )
 
-        existing_sailings = load_sailings(config.ferry_sailing_csv)
         route_lookup = build_route_lookup(config.ferry_route_csv)
+        canonical_sailing_lookup = build_canonical_sailing_lookup(config.ferry_sailing_csv)
 
         Logger.info(
             "master_loaded",
-            existing_sailings=len(existing_sailings),
             route_lookup_keys=len(route_lookup),
+            canonical_sailing_lookup_keys=len(canonical_sailing_lookup),
         )
 
         session = build_session()
@@ -572,7 +627,7 @@ def main() -> int:
         resolved, unresolved = resolve_candidates(
             candidates=all_candidates,
             route_lookup=route_lookup,
-            existing_sailings=existing_sailings,
+            canonical_sailing_lookup=canonical_sailing_lookup,
         )
         final_items = dedupe_resolved(resolved)
 
@@ -600,7 +655,7 @@ def main() -> int:
             try:
                 Logger.info(
                     "sending_abnormal_sailing",
-                    operator=item.operator,
+                    operator=item.operator_bubble_name_en,
                     route_import_key=item.route_import_key,
                     departure_hhmm=item.departure_hhmm,
                     status=item.status,
@@ -611,7 +666,7 @@ def main() -> int:
                 )
 
                 bubble.send_status(
-                    operator=item.operator,
+                    operator=item.operator_bubble_name_en,
                     status=item.status,
                     checked_at_iso=checked_at_iso,
                     service_date_iso=service_date_iso,
@@ -624,7 +679,7 @@ def main() -> int:
                 failed += 1
                 Logger.error(
                     "bubble_send_failed",
-                    operator=item.operator,
+                    operator=item.operator_bubble_name_en,
                     route_import_key=item.route_import_key,
                     departure_hhmm=item.departure_hhmm,
                     status=item.status,
