@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 import requests
+import urllib3
 from bs4 import BeautifulSoup
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -21,6 +22,8 @@ JST = ZoneInfo("Asia/Tokyo")
 ANEI_URL = "https://aneikankou.co.jp/condition"
 YKF_URL = "https://yaeyama.co.jp/operation.html#status"
 DEFAULT_TIMEOUT = 30
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 @dataclass
@@ -61,11 +64,17 @@ def build_session() -> requests.Session:
     return session
 
 
-def get_with_retry(session: requests.Session, url: str, retries: int = 2, delay_sec: int = 3) -> str:
+def get_with_retry(
+    session: requests.Session,
+    url: str,
+    retries: int = 2,
+    delay_sec: int = 3,
+    verify: bool = True,
+) -> str:
     last_error = None
     for attempt in range(1, retries + 1):
         try:
-            response = session.get(url, timeout=DEFAULT_TIMEOUT)
+            response = session.get(url, timeout=DEFAULT_TIMEOUT, verify=verify)
             response.raise_for_status()
             return response.text
         except Exception as e:
@@ -177,11 +186,11 @@ def build_status_map_for_today() -> Dict[Tuple[str, str], Tuple[str, str]]:
     """
     session = build_session()
 
-    anei_html = get_with_retry(session, ANEI_URL, retries=2, delay_sec=3)
+    anei_html = get_with_retry(session, ANEI_URL, retries=2, delay_sec=3, verify=True)
     anei_summary = extract_anei_summary_text(anei_html)
     anei_status = parse_anei_status(anei_summary)
 
-    ykf_html = get_with_retry(session, YKF_URL, retries=2, delay_sec=3)
+    ykf_html = get_with_retry(session, YKF_URL, retries=2, delay_sec=3, verify=False)
     ykf_route_statuses = parse_ykf_route_statuses(ykf_html)
 
     status_map: Dict[Tuple[str, str], Tuple[str, str]] = {}
